@@ -234,7 +234,7 @@ function avatar(c){
 function thumb(c){
   const owner = ownerOf(c.full_name);
   const letter = esc(owner.slice(0,1).toUpperCase());
-  return `<div class="thumb"><img loading="lazy" alt="" src="/thumb/${c.repo_id}?w=240"
+  return `<div class="thumb"><img loading="lazy" decoding="async" alt="" src="/thumb/${c.repo_id}?w=240"
      onerror="this.style.display='none';this.nextElementSibling.style.display='grid'"><span class="tfallback">${letter}</span></div>`;
 }
 function langDot(lang){

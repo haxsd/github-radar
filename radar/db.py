@@ -1,4 +1,4 @@
-"""SQLite 存储层：仓库 / 快照 / 事件 / 已读 / 收藏。"""
+﻿"""SQLite 存储层：仓库 / 快照 / 事件 / 已读 / 收藏。"""
 
 from __future__ import annotations
 
@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT
 );
 
+CREATE INDEX IF NOT EXISTS idx_repos_hidden ON repos(hidden);
 CREATE INDEX IF NOT EXISTS idx_events_ready ON events(card_ready, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_repos_pushed ON repos(pushed_at);
 CREATE INDEX IF NOT EXISTS idx_repo_tags_tag ON repo_tags(tag);

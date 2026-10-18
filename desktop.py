@@ -58,11 +58,12 @@ def main() -> None:
     if not _port_in_use(config.WEB_HOST, config.WEB_PORT):
         threading.Thread(
             target=lambda: web.app.run(
-                host=config.WEB_HOST, port=config.WEB_PORT, debug=False, use_reloader=False
+                host=config.WEB_HOST, port=config.WEB_PORT, debug=False, use_reloader=False, threaded=True
             ),
             daemon=True,
         ).start()
         threading.Thread(target=web._startup_catchup, daemon=True).start()
+        web._start_thumb_warmer()
         _wait_port(config.WEB_HOST, config.WEB_PORT)
 
     edge = _find_edge()

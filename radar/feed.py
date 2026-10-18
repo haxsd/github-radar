@@ -1,9 +1,11 @@
-"""信息流：候选查询、个性化排序、标签组合筛选、榜单、收藏。"""
+﻿"""信息流：候选查询、个性化排序、标签组合筛选、榜单、收藏。"""
 
 from __future__ import annotations
 
 import json
 import math
+import threading
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -119,6 +121,7 @@ def _to_card(row: Any, score: float, tags: list[str]) -> dict[str, Any]:
         "homepage": row["homepage"],
         "pushed_at": row["pushed_at"],
         "payload": _json_field(row["payload"], {}),
+        "og_image": row["og_image"] or "",
         "score": round(score, 4),
     }
 
@@ -152,7 +155,7 @@ def next_cards(
         sql += """ AND EXISTS (SELECT 1 FROM repo_tags t
                                WHERE t.repo_id = r.id AND t.tag = ?)"""
         params.append(tag)
-    sql += " ORDER BY e.occurred_at DESC LIMIT 900"
+    sql += " ORDER BY e.occurred_at DESC LIMIT 600"
 
     rows = conn.execute(sql, params).fetchall()
     tags_map = db.tags_for(conn, [r["id"] for r in rows])
@@ -183,19 +186,24 @@ def next_cards(
                 break
 
     cards = [_to_card(r, s, tags_map.get(r["id"], [])) for s, r in picked]
+    conn.close()
 
-    if mark_shown:
-        try:
-            for card in cards:
-                db.mark_seen(conn, card["repo_id"], "shown")
-            conn.commit()
-        except Exception:
-            # 采集正在写库时可能短暂锁定：卡片照常返回，下次再标记
+    if mark_shown and cards:
+        # 标记已读放到后台线程：不阻塞接口响应
+        ids = [c["repo_id"] for c in cards]
+
+        def _mark_shown() -> None:
             try:
-                conn.rollback()
+                worker_conn = db.connect()
+                db.init_db(worker_conn)
+                for repo_id in ids:
+                    db.mark_seen(worker_conn, repo_id, "shown")
+                worker_conn.commit()
+                worker_conn.close()
             except Exception:
                 pass
-    conn.close()
+
+        threading.Thread(target=_mark_shown, daemon=True).start()
     return cards
 
 
@@ -491,3 +499,73 @@ def card_by_id(repo_id: int) -> dict[str, Any] | None:
     card = _to_card(base, 0.0, tags)
     conn.close()
     return card
+
+# ---------------- 轻量 TTL 缓存（页面/接口提速） ----------------
+_CACHE: dict[str, tuple[float, Any]] = {}
+_CACHE_LOCK = threading.Lock()
+
+
+def _cached(key: str, ttl: float, fn):
+    now = time.time()
+    with _CACHE_LOCK:
+        hit = _CACHE.get(key)
+        if hit and now - hit[0] < ttl:
+            return hit[1]
+    value = fn()
+    with _CACHE_LOCK:
+        _CACHE[key] = (now, value)
+    return value
+
+
+def invalidate_cache() -> None:
+    with _CACHE_LOCK:
+        _CACHE.clear()
+
+
+_unwrapped = {
+    "stats": stats,
+    "category_counts": category_counts,
+    "tag_groups": tag_groups,
+    "profile_summary": profile_summary,
+    "ranking": ranking,
+    "newcomers": newcomers,
+    "top_stars": top_stars,
+    "daily": daily,
+    "saved_cards": saved_cards,
+}
+
+
+def stats():  # noqa: F811
+    return _cached("stats", 6, _unwrapped["stats"])
+
+
+def category_counts():  # noqa: F811
+    return _cached("categories", 20, _unwrapped["category_counts"])
+
+
+def tag_groups():  # noqa: F811
+    return _cached("tag_groups", 60, _unwrapped["tag_groups"])
+
+
+def profile_summary():  # noqa: F811
+    return _cached("profile", 20, _unwrapped["profile_summary"])
+
+
+def ranking(days: int = 7, limit: int = 60):  # noqa: F811
+    return _cached(f"ranking:{days}:{limit}", 60, lambda: _unwrapped["ranking"](days, limit))
+
+
+def newcomers(limit: int = 60):  # noqa: F811
+    return _cached(f"newcomers:{limit}", 60, lambda: _unwrapped["newcomers"](limit))
+
+
+def top_stars(limit: int = 60):  # noqa: F811
+    return _cached(f"top_stars:{limit}", 120, lambda: _unwrapped["top_stars"](limit))
+
+
+def daily(limit: int = 12):  # noqa: F811
+    return _cached(f"daily:{limit}", 60, lambda: _unwrapped["daily"](limit))
+
+
+def saved_cards(limit: int = 200):  # noqa: F811
+    return _cached(f"saved:{limit}", 10, lambda: _unwrapped["saved_cards"](limit))
