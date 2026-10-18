@@ -1,4 +1,4 @@
-# GitHub 中文雷达 · StarScout
+﻿# GitHub 中文雷达 · StarScout
 
 > 把 GitHub 上「最近新建 / 正在更新」的项目自动抓下来，用大模型生成中文介绍，做成一个可以像刷信息流一样快速扫的本地网页。
 
@@ -22,6 +22,7 @@
 ![详情页](docs/screenshots/detail.png)
 ![日报](docs/screenshots/daily.png)
 ![榜单](docs/screenshots/rank.png)
+![设置页](docs/screenshots/settings.png)
 
 ## 快速开始
 
