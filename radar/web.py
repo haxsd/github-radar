@@ -169,6 +169,14 @@ def api_settings_test():
 THUMB_DIR = config.DATA_DIR / "thumbs"
 
 
+@app.get("/favicon.ico")
+def favicon():
+    icon = config.assets_dir() / "icon.png"
+    if icon.exists():
+        return send_file(str(icon), mimetype="image/png", max_age=86400)
+    return "", 204
+
+
 @app.get("/thumb/<int:repo_id>")
 def thumb(repo_id: int):
     """项目预览图：首次请求时抓取 GitHub 社交预览图、压缩缓存，之后直接读缓存。"""
@@ -302,6 +310,17 @@ def api_action():
         return jsonify({"ok": False, "error": f"数据库正忙，请重试：{exc}"}), 503
     conn.close()
     return jsonify({"ok": True, "unread": feed.stats().get("unread", 0)})
+
+
+@app.post("/api/demo/load")
+def api_demo_load():
+    from . import demo
+
+    try:
+        result = demo.load_demo()
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"载入示例数据失败：{exc}"}), 500
+    return jsonify({"ok": True, **result})
 
 
 @app.get("/api/stats")

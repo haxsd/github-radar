@@ -1,0 +1,50 @@
+name: Bug 反馈
+description: 遇到报错、页面异常、数据不对
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！如果能附上日志和截图会更快定位。
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 描述现象，以及你期望的结果
+      placeholder: 打开信息流后页面空白，控制台报 500…
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 运行 python -m radar.web
+        2. 打开 http://127.0.0.1:8765
+        3. 点击「载入示例数据」
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 运行环境
+      placeholder: Windows 11 / Python 3.13 / 源码运行（或 Docker / 打包 exe）
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: 使用的模型服务
+      placeholder: DeepSeek deepseek-chat / OpenAI gpt-4o-mini / 本地 Ollama
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志
+      description: 可以贴 data/logs/ 下的内容，注意先删掉 key
+      render: text
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: 截图
+      description: 直接拖进来即可

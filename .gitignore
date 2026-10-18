@@ -1,4 +1,4 @@
-﻿# 本地环境与数据（不要提交）
+# 本地环境与数据（不要提交）
 .venv/
 data/
 .env
@@ -9,3 +9,8 @@ __pycache__/
 *.pyc
 .DS_Store
 Thumbs.db
+
+# 打包产物
+dist/
+build/
+*.spec

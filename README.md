@@ -1,10 +1,20 @@
-﻿# GitHub 中文雷达 · StarScout
+# GitHub 中文雷达 · StarScout
 
 > 把 GitHub 上「最近新建 / 正在更新」的项目自动抓下来，用大模型生成中文介绍，做成一个可以像刷信息流一样快速扫的本地网页。
 
 给自己用的项目发现工具：不用每天翻 Trending，打开就是一批带中文摘要的新项目，收藏 / 跳过会影响后续推荐。
 
-![信息流](docs/screenshots/feed.png)
+![演示](docs/screenshots/demo.gif)
+
+![桌面应用](docs/screenshots/app.png)
+
+## 三种跑起来的方式
+
+| 方式 | 适合 | 命令 |
+|---|---|---|
+| **桌面应用** | 自己电脑上日常用 | `python desktop.py`，或打包成 `StarScout.exe` |
+| **网页服务** | 想扔到 NAS / 服务器 | `python -m radar.web` |
+| **Docker** | 一条命令部署 | `docker compose up -d --build` |
 
 ## 功能
 
@@ -16,6 +26,8 @@
 - **历史**：看过的、跳过的、收藏的都在；跳过后悔可以放回信息流
 - **兴趣反馈**：收藏 / 感兴趣 / 跳过会改变标签权重，越刷越合口味
 - **标签组合筛选**：领域 + 形态 + 平台 + 特性多条件 AND
+- **桌面应用**：Edge 应用窗口模式，像原生 App 一样双击打开（也可打包成 exe）
+- **示例数据**：没配 Key 也能先点开看效果，13 个手写中文示例项目
 - **数据清洗**：自动隐藏 SEO 推广页、破解资源、批量刷星农场
 - **全本地**：SQLite 存数据，不收集任何遥测
 
@@ -59,6 +71,42 @@ python -m radar.collect wave      # 日常增量（新项目 + 更新 + 中文�
 ```
 
 再刷新网页就能刷了。
+
+## 桌面应用
+
+想当成本地应用用（双击打开、独立窗口、没有浏览器地址栏）：
+
+```bash
+python desktop.py            # 直接以应用窗口运行（Windows 用 Edge 应用模式）
+```
+
+或者打包成 exe（Windows，需要先 `pip install pyinstaller`）：
+
+```bat
+build_app.bat
+:: 产物：dist\StarScout\StarScout.exe
+```
+
+打包后的 exe 把数据、`.env` 放在 exe 同目录的 `data\`，可以整个文件夹拷走。第一次打开如果还没配 Key，首页会提示「载入示例数据」，也能先看到界面效果。
+
+## Docker
+
+```bash
+cp .env.example .env    # 填 GITHUB_TOKEN / LLM_API_KEY
+docker compose up -d --build
+# 打开 http://127.0.0.1:8765
+```
+
+数据落在宿主机的 `./data`，容器里只跑网页服务（桌面窗口模式不适用于容器）。
+
+## 示例数据（不配 Key 也能看）
+
+```bash
+python -m radar.demo          # 载入 13 个手写中文示例项目
+python -m radar.demo --reset  # 删掉示例数据
+```
+
+也可以直接在首页点「载入示例数据」。
 
 ## 配置
 
@@ -112,18 +160,28 @@ macOS / Linux 用 cron：
 
 ```
 radar/
-  config.py     配置（GitHub token、模型服务、规则常量）
-  db.py         SQLite 结构与读写
-  github.py     GitHub REST / GraphQL
-  llm.py        模型调用（中文卡生成 / 翻译 / 打标）
-  collect.py    采集与维护命令
-  feed.py       推荐排序、筛选、榜单、日报
-  web.py        Flask 网页与 API
-  templates/    页面模板
-data/           本地数据库、缓存（不提交）
+  config.py      配置（GitHub token、模型服务、规则常量）
+  db.py          SQLite 结构与读写
+  github.py      GitHub REST / GraphQL
+  llm.py         模型调用（中文卡生成 / 翻译 / 打标）
+  collect.py     采集与维护命令
+  feed.py        推荐排序、筛选、榜单、日报
+  demo.py        内置示例数据
+  web.py         Flask 网页与 API
+  templates/     页面模板
+desktop.py       桌面应用入口（Edge 应用窗口）
+scripts/         图标生成、演示 GIF 生成等工具脚本
+assets/          应用图标
+data/            本地数据库、缓存（不提交）
+Dockerfile       容器镜像
+build_app.bat    打包 exe 脚本
 ```
 
 采集规则：**star > 50 且最近 3 个月有提交** 的仓库进入池子，采集窗口为近 90 天新建；更新事件展示 release / 涨星 / 提交等活动。
+
+## 参与贡献
+
+欢迎提 issue / PR，具体约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题请不要开公开 issue。
 
 ## 常见问题
 

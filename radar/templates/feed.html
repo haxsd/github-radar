@@ -367,17 +367,42 @@ async function loadMore(first){
     bindRows();
     updateCount();
     if(cards.length===0){
-      $("sentinel").innerHTML=`<div class="empty" style="padding:40px 0">
+      const total=(d.stats&&d.stats.repos)||0;
+      if(total===0 && !state.tags.length){
+        $("sentinel").innerHTML=`<div class="empty" style="padding:56px 20px;max-width:560px;margin:0 auto">
+          <div class="big" style="font-size:40px">📡</div>
+          <h2 style="font-size:20px;margin:12px 0 8px">还没有数据</h2>
+          <p class="muted" style="font-size:13px;line-height:1.8;margin-bottom:18px">
+            先去 <a href="/settings">设置</a> 填 GitHub Token 和模型 API Key，再跑一次采集；<br>
+            或者先载入内置示例数据看看界面效果（不需要任何 Key）。
+          </p>
+          <button class="btn primary" onclick="loadDemo()">载入示例数据</button>
+        </div>`;
+      } else {
+        $("sentinel").innerHTML=`<div class="empty" style="padding:40px 0">
         <div class="big" style="font-size:34px">🎉</div>
         <h2 style="font-size:18px;margin:8px 0">${state.tags.length?"该筛选下没有更多了":"这一波刷完了"}</h2>
         <p class="muted" style="font-size:12.5px">下一波数据会在 00:00 / 08:00 / 16:00 自动补齐</p>
       </div>`;
+      }
     } else {
       $("sentinel").innerHTML="";
     }
   }catch(e){ $("sentinel").textContent="加载失败："+e.message; }
   finally{ state.loading=false; }
   if(!state.exhausted && state.cards.length<12) loadMore();
+}
+async function loadDemo(){
+  $("sentinel").innerHTML='<div class="spinner"></div>';
+  try{
+    const r=await fetch("/api/demo/load",{method:"POST"});
+    const d=await r.json();
+    if(!d.ok) throw new Error(d.error||"载入失败");
+    toast(`已载入 ${d.total} 个示例项目`);
+    reload();
+  }catch(e){
+    $("sentinel").textContent="载入示例数据失败："+e.message;
+  }
 }
 function bindRows(){
   document.querySelectorAll("#rows .row").forEach(row=>{

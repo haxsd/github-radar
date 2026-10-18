@@ -1,0 +1,10 @@
+.venv/
+data/
+.env
+dist/
+build/
+*.spec
+__pycache__/
+*.pyc
+.git/
+docs/screenshots/demo.gif

@@ -1,0 +1,30 @@
+name: 功能建议
+description: 想要新的能力或体验改进
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: scene
+    attributes:
+      label: 使用场景
+      description: 你在什么情况下觉得需要它？
+      placeholder: 我每天只刷 5 分钟，想只看今天新收录的项目…
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你期望的做法
+      description: 有具体想法就写，没有也可以只写场景
+  - type: textarea
+    id: alternative
+    attributes:
+      label: 已尝试的替代方案
+      description: 现在你是如何绕过这个问题的？
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: 范围
+      options:
+        - label: 这个建议可以只在本地实现，不需要额外服务
+        - label: 我愿意自己提 PR

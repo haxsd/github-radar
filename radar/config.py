@@ -10,11 +10,20 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parent.parent
+
+def _app_root() -> Path:
+    """源码运行用项目根目录；打包成 exe 后用 exe 所在目录（数据、.env 都放这里）。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+ROOT = _app_root()
 DATA_DIR = ROOT / "data"
 DB_PATH = DATA_DIR / "radar.db"
 ENV_PATH = ROOT / ".env"
@@ -71,13 +80,36 @@ LLM_DISABLE_THINKING: bool = True
 WEB_HOST: str = "127.0.0.1"
 WEB_PORT: int = 8765
 
+# 由 _load 管理的键：真实环境变量优先级高于 .env，同时 .env 改动后能热加载
+_MANAGED_ENV = (
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GH_CLI_PATH",
+    "LLM_PROVIDER",
+    "LLM_BASE_URL",
+    "LLM_MODEL",
+    "LLM_API_KEY",
+    "LLM_JSON_MODE",
+    "LLM_DISABLE_THINKING",
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_BASE_URL",
+    "DEEPSEEK_MODEL",
+    "WEB_HOST",
+    "WEB_PORT",
+)
+_TRUE_ENV = {key: os.environ[key] for key in _MANAGED_ENV if key in os.environ}
+
 
 def _load() -> None:
     global GITHUB_TOKEN, GH_CLI_PATH, LLM_PROVIDER, LLM_BASE_URL, LLM_API_KEY
     global LLM_MODEL, LLM_JSON_MODE, LLM_DISABLE_THINKING, WEB_HOST, WEB_PORT
 
+    # 重置托管键 -> 读取 .env -> 再把真实环境变量覆盖回去
+    for key in _MANAGED_ENV:
+        os.environ.pop(key, None)
     if ENV_PATH.exists():
         load_dotenv(ENV_PATH, override=True)
+    os.environ.update(_TRUE_ENV)
 
     GITHUB_TOKEN = _env("GITHUB_TOKEN") or _env("GH_TOKEN")
     GH_CLI_PATH = _env("GH_CLI_PATH")
@@ -221,3 +253,11 @@ def save_env(values: dict[str, str]) -> None:
 
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def assets_dir() -> Path:
+    """打包后资源在 _MEIPASS/assets，源码运行时在项目 assets/。"""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        return Path(meipass) / "assets"
+    return ROOT / "assets"

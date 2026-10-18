@@ -428,8 +428,11 @@ def catchup_if_stale(max_age_hours: float = 8.0) -> bool:
         age = 999.0
         if last:
             try:
-                age = (datetime.now() - datetime.fromisoformat(last)).total_seconds() / 3600.0
-            except ValueError:
+                last_dt = datetime.fromisoformat(last)
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.astimezone()
+                age = (datetime.now().astimezone() - last_dt).total_seconds() / 3600.0
+            except (ValueError, TypeError):
                 pass
         if age < max_age_hours:
             print(f"[startup] 数据 {age:.1f} 小时前更新，无需补跑")
