@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}榜单 · GitHub 中文雷达{% endblock %}
+
+{% block style %}
+  .head{padding:10px 0 22px;border-bottom:1px solid var(--stroke);margin-bottom:22px}
+  .head h1{font-size:26px;margin:0 0 8px;letter-spacing:-.3px}
+  .head p{margin:0;color:var(--muted);font-size:13.5px}
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 0}
+  .tab{cursor:pointer;font-size:14px;padding:9px 18px;border-radius:999px;color:var(--text-dim);
+    border:1px solid var(--stroke-strong);background:rgba(255,255,255,.03);transition:.16s}
+  .tab:hover{color:var(--text);background:rgba(255,255,255,.07)}
+  .tab.active{color:#fff;border-color:rgba(120,160,255,.4);
+    background:linear-gradient(135deg,rgba(91,140,255,.24),rgba(160,107,255,.2))}
+  .rankwrap{margin-top:20px}
+  .rows{display:flex;flex-direction:column;gap:10px}
+  .row{display:grid;grid-template-columns:56px 1fr auto;gap:16px;align-items:center;
+    padding:16px 20px;border-radius:16px;background:rgba(255,255,255,.028);
+    border:1px solid var(--stroke);transition:.16s}
+  .row:hover{background:rgba(255,255,255,.06);transform:translateX(2px);border-color:var(--stroke-strong)}
+  .rank{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;
+    font-family:var(--mono);font-weight:700;font-size:15px;color:var(--text-dim);
+    background:rgba(255,255,255,.05);border:1px solid var(--stroke-strong)}
+  .row:nth-child(1) .rank{background:linear-gradient(135deg,#ffd76a,#ff9f43);color:#3a2200;border:none;
+    box-shadow:0 8px 22px rgba(255,180,60,.35)}
+  .row:nth-child(2) .rank{background:linear-gradient(135deg,#e6ecf5,#a9b6c9);color:#1d2633;border:none;
+    box-shadow:0 8px 20px rgba(200,210,230,.22)}
+  .row:nth-child(3) .rank{background:linear-gradient(135deg,#f0b48a,#c78150);color:#331a08;border:none;
+    box-shadow:0 8px 20px rgba(220,150,90,.25)}
+  .main{min-width:0}
+  .name{font-weight:700;font-size:16.5px;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .name a:hover{color:#bcd3ff}
+  .sub{color:var(--text-dim);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tagline{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap}
+  .t{font-size:11.5px;padding:2px 8px;border-radius:999px;border:1px solid var(--stroke-strong);color:var(--text-dim)}
+  .right{text-align:right;white-space:nowrap}
+  .delta{font-family:var(--mono);font-weight:700;font-size:17px;color:var(--success)}
+  .delta.minus{color:var(--muted)}
+  .stars{font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:2px}
+  .note{color:var(--muted);font-size:12.5px;margin:0 0 18px}
+  .panel{display:none}
+  .panel.active{display:block}
+  .row{cursor:pointer}
+  .row .hint{font-size:11px;color:var(--muted);opacity:0;transition:.15s}
+  .row:hover .hint{opacity:1}
+  .modal{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;
+    padding:24px;background:rgba(4,7,12,.66);backdrop-filter:blur(8px)}
+  .modal.open{display:flex}
+  .mbox{width:min(700px,94vw);max-height:86vh;overflow:auto;border-radius:22px;padding:26px 28px}
+  .mtitle{font-size:21px;font-weight:750;margin:0 0 8px;word-break:break-word;letter-spacing:-.2px}
+  .mmeta{display:flex;gap:10px;flex-wrap:wrap;color:var(--muted);font-size:12.5px;margin-bottom:14px}
+  .mmeta .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:middle}
+  .msum{font-size:15px;line-height:1.95;color:#cdd8e8;white-space:pre-wrap;margin-bottom:14px}
+  .mpoints{margin:0 0 16px;padding-left:20px;color:#c9d6e8;font-size:14px;line-height:1.95}
+  .mpoints li::marker{color:#7c9bff}
+  .mtags{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+  .mtag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--stroke-strong);
+    color:var(--text-dim);background:rgba(255,255,255,.04)}
+  .mtag.feat{color:#9ee8c8;background:rgba(53,208,127,.09);border-color:rgba(53,208,127,.24)}
+  .mtag.kw{color:#c3b4ff;background:rgba(160,107,255,.1);border-color:rgba(160,107,255,.26)}
+  .mwhy{color:var(--muted);font-size:13px;margin:0 0 18px}
+  .mfoot{display:flex;gap:10px;flex-wrap:wrap;padding-top:16px;border-top:1px solid var(--stroke)}
+{% endblock %}
+
+{% block content %}
+<div class="wrap">
+  <div class="head">
+    <h1>榜单</h1>
+    <p>按 star 增量、收录时间、总星三种口径看项目。数据随每次采集更新。</p>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <div class="tab active" data-panel="week">周飙升</div>
+    <div class="tab" data-panel="month">月飙升</div>
+    <div class="tab" data-panel="new">新收录</div>
+    <div class="tab" data-panel="top">总星</div>
+  </div>
+
+  <div class="rankwrap">
+    {% set panels = [
+      ('week', '周飙升', week['items'], week_note),
+      ('month', '月飙升', month['items'], month_note),
+      ('new', '新收录', newcomers, '按收录时间排序'),
+      ('top', '总星', top, '按累计 star 排序')
+    ] %}
+    {% for key, title, items, note in panels %}
+    <div class="panel {{ 'active' if loop.first else '' }}" data-panel="{{ key }}">
+      <p class="note">{{ note }} · 共 {{ items|length }} 个</p>
+      <div class="rows">
+        {% for it in items %}
+        <div class="row" data-repo="{{ it.repo_id }}" title="点击看详情">
+          <div class="rank">{{ loop.index }}</div>
+          <div class="main">
+            <div class="name"><a href="{{ it.html_url }}" target="_blank" rel="noreferrer">{{ it.full_name }}</a></div>
+            <div class="sub">{{ it.description_zh or it.description or '' }}</div>
+            <div class="tagline">
+              {% if it.category %}<span class="t">{{ it.category }}</span>{% endif %}
+              {% if it.language %}<span class="t">{{ it.language }}</span>{% endif %}
+              {% if it.judgement %}<span class="t">{{ it.judgement }}</span>{% endif %}
+              {% for lb in (it.tag_labels or [])[1:4] %}<span class="t">{{ lb }}</span>{% endfor %}
+            </div>
+          </div>
+          <div class="right">
+            {% if it.delta is defined %}
+              <div class="delta {{ 'minus' if it.delta < 0 else '' }}">{{ '+' if it.delta > 0 else '' }}{{ it.delta }}</div>
+              <div class="stars">总 {{ it.stars }}★</div>
+            {% else %}
+              <div class="stars">★ {{ it.stars }}</div>
+            {% endif %}
+            <div class="hint">查看详情</div>
+          </div>
+        </div>
+        {% else %}
+        <div class="empty"><div class="big">📊</div><h2>还没有数据</h2><p>先跑一次采集，或等数据积累几天。</p></div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="modal" id="modal"><div class="mbox glass" id="mbox"></div></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll("#tabs .tab").forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll("#tabs .tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+    tab.classList.add("active");
+    const panel = document.querySelector(`.panel[data-panel="${tab.dataset.panel}"]`);
+    if (panel) panel.classList.add("active");
+  };
+});
+// 周飙升还没数据时，默认落到「新收录」，避免一进来看到空表
+(function () {
+  const weekPanel = document.querySelector('.panel[data-panel="week"]');
+  if (weekPanel && weekPanel.querySelector(".empty")) {
+    const newTab = document.querySelector('#tabs .tab[data-panel="new"]');
+    if (newTab) newTab.click();
+  }
+})();
+
+// ---------- 点击行查看详情 ----------
+const modal = document.getElementById('modal');
+const mbox = document.getElementById('mbox');
+const LANG_COLORS = {
+  Python:"#3572A5", JavaScript:"#f1e05a", TypeScript:"#3178c6", Rust:"#dea584", Go:"#00ADD8",
+  "C++":"#f34b7d", C:"#555555", "C#":"#178600", Java:"#b07219", Swift:"#F05138", Kotlin:"#A97BFF",
+  HTML:"#e34c26", CSS:"#563d7c", Shell:"#89e051", Ruby:"#701516", PHP:"#4F5D95", Lua:"#000080",
+  Zig:"#ec915c", Dart:"#00B4AB", Vue:"#41b883", Svelte:"#ff3e00", Elixir:"#6e4a7e", Haskell:"#5e5086"
+};
+function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmtStars(n){ if(n>=1000) return (n/1000).toFixed(n>=10000?0:1)+"k"; return String(n??0); }
+function langDot(lang){
+  const color = LANG_COLORS[lang] || "#8b98ab";
+  return `<span class="dot" style="background:${color}"></span>`;
+}
+function toast(msg){
+  const el=document.getElementById("toast"); if(!el) return;
+  el.textContent=msg; el.classList.add("show");
+  clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove("show"),1600);
+}
+function openModal(c){
+  const tags=(c.tags||[]).map((t,i)=>{
+    const kind=t.split(":")[0], label=(c.tag_labels||[])[i]||t;
+    if(kind==="cat") return "";
+    const cls = kind==="kw"?"kw":kind==="feature"?"feat":"";
+    return `<span class="mtag ${cls}">${kind==="kw"?"#":""}${esc(label)}</span>`;
+  }).join("");
+  const points=(c.points||[]).length
+    ? `<ul class="mpoints">${c.points.map(p=>`<li>${esc(p)}</li>`).join("")}</ul>` : "";
+  mbox.innerHTML = `
+    <div class="mtitle">${esc(c.full_name)}</div>
+    <div class="mmeta">
+      ${c.language?`<span>${langDot(c.language)}${esc(c.language)}</span>`:""}
+      <span>★ ${fmtStars(c.stars)}</span>
+      ${c.license?`<span>${esc(c.license)}</span>`:""}
+      ${c.category?`<span>${esc(c.category)}</span>`:""}
+      ${c.judgement?`<span>${esc(c.judgement)}</span>`:""}
+    </div>
+    ${c.description_zh?`<div style="font-size:17px;font-weight:650;line-height:1.5;margin:0 0 10px">${esc(c.description_zh)}</div>`:""}
+    ${c.summary_zh?`<div class="msum">${esc(c.summary_zh)}</div>`:""}
+    ${points}
+    <div class="mtags">${tags}</div>
+    <div class="mfoot">
+      <button class="btn primary" onclick="window.open('${esc(c.html_url)}','_blank','noreferrer')">打开 GitHub</button>
+      <button class="btn good" onclick="saveRepo(${c.repo_id})">收藏</button>
+      <button class="btn ghost" onclick="closeModal()">关闭 Esc</button>
+    </div>`;
+  modal.classList.add('open');
+}
+function closeModal(){ modal.classList.remove('open'); }
+async function saveRepo(id){
+  try{
+    await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({repo_id:id,action:'save'})});
+    toast('已收藏 ✓');
+    closeModal();
+  }catch(e){ toast('收藏失败'); }
+}
+document.querySelectorAll('.row[data-repo]').forEach(r=>{
+  r.onclick = async ()=>{
+    const id = r.dataset.repo; if(!id) return;
+    try{
+      const res = await fetch('/api/repo/'+id);
+      const d = await res.json();
+      if(d.ok) openModal(d.card);
+    }catch(e){}
+  };
+});
+modal.onclick = (e)=>{ if(e.target===modal) closeModal(); };
+document.addEventListener('keydown',(e)=>{ if(e.key==='Escape') closeModal(); });
+
+// 便于截图/分享：/rank?detail=1 自动打开第一个榜单项目
+if (new URLSearchParams(location.search).get("detail") === "1") {
+  setTimeout(() => {
+    const first = document.querySelector('.panel.active .row[data-repo]');
+    if (first) first.click();
+  }, 350);
+}
+</script>
+{% endblock %}

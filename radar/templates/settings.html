@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}设置 · GitHub 中文雷达{% endblock %}
+
+{% block style %}
+  .shead{padding:8px 0 20px;border-bottom:1px solid var(--stroke);margin-bottom:22px}
+  .shead h1{font-size:24px;margin:0 0 8px}
+  .shead p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.7}
+  .sgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:18px;align-items:start}
+  .scard{padding:20px 22px;border-radius:18px;border:1px solid var(--stroke);background:rgba(255,255,255,.025)}
+  .scard h2{font-size:15px;margin:0 0 4px;display:flex;align-items:center;gap:8px}
+  .scard .sub{font-size:12.5px;color:var(--muted);margin:0 0 16px;line-height:1.6}
+  .srow{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+  .srow label{font-size:12.5px;color:var(--text-dim);font-weight:600}
+  .srow input,.srow select{width:100%;padding:9px 11px;border-radius:10px;border:1px solid var(--stroke-strong);
+    background:rgba(0,0,0,.28);color:var(--text);font-size:13px;font-family:var(--mono);outline:none}
+  .srow input:focus,.srow select:focus{border-color:rgba(130,170,255,.55);box-shadow:0 0 0 3px rgba(110,150,255,.12)}
+  .srow .hint{font-size:11.5px;color:var(--muted);line-height:1.6}
+  .statusline{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;flex-wrap:wrap}
+  .pill{font-size:11px;padding:2px 9px;border-radius:999px;border:1px solid var(--stroke-strong);color:var(--text-dim)}
+  .pill.ok{color:#8ff0b6;border-color:rgba(90,230,150,.3);background:rgba(90,230,150,.08)}
+  .pill.warn{color:#ffcf8a;border-color:rgba(255,190,90,.3);background:rgba(255,190,90,.08)}
+  .checks{display:flex;gap:18px;flex-wrap:wrap;margin:4px 0 14px;font-size:12.5px;color:var(--text-dim)}
+  .checks label{display:flex;align-items:center;gap:6px;cursor:pointer}
+  .sactions{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+  .sactions .btn{padding:9px 18px}
+  .result{font-size:12.5px;margin-top:12px;min-height:18px;color:var(--muted);line-height:1.6}
+  .result.ok{color:#8ff0b6}
+  .result.err{color:#ff9c9c}
+  .foot{margin-top:22px;font-size:12px;color:var(--muted);line-height:1.9}
+  .foot code{font-family:var(--mono);font-size:11.5px;background:rgba(255,255,255,.06);
+    padding:1px 6px;border-radius:5px;color:var(--text-dim)}
+{% endblock %}
+
+{% block content %}
+<div class="wrap" style="max-width:1100px">
+  <div class="shead">
+    <h1>设置</h1>
+    <p>这个项目用你自己的 GitHub Token 和模型 API Key 运行，配置只保存在本机的 <code>{{ env_path }}</code>，不会上传到任何服务器。</p>
+  </div>
+
+  <div class="sgrid">
+    <section class="scard">
+      <h2>① GitHub 访问</h2>
+      <p class="sub">需要一个 Personal Access Token（不需要任何权限勾选，public 仓库只读即可）。也可以先用 <code>gh auth login</code> 登录。</p>
+      <div class="statusline">
+        当前状态：
+        {% if github_status == 'env' %}<span class="pill ok">已配置（.env）</span>
+        {% elif github_status == 'gh-cli' %}<span class="pill ok">使用 gh CLI 登录态</span>
+        {% else %}<span class="pill warn">未配置</span>{% endif %}
+      </div>
+      <div class="srow">
+        <label for="ghToken">GITHUB_TOKEN</label>
+        <input id="ghToken" type="password" spellcheck="false" autocomplete="off"
+               placeholder="ghp_… 或 github_pat_…（留空则保持不变）">
+        <span class="hint">创建地址：GitHub → Settings → Developer settings → Personal access tokens</span>
+      </div>
+      <div class="sactions">
+        <button class="btn primary" onclick="testTarget('github')">测试连接</button>
+      </div>
+      <div class="result" id="ghResult"></div>
+    </section>
+
+    <section class="scard">
+      <h2>② 模型服务（生成中文介绍）</h2>
+      <p class="sub">任意 OpenAI 兼容接口都能用：DeepSeek / OpenAI / 本地 Ollama / 自建网关。默认按 DeepSeek 配。</p>
+      <div class="statusline">
+        当前：
+        <span class="pill">{{ current.provider }}</span>
+        <span class="pill">{{ current.model or '未设置模型' }}</span>
+        {% if has_llm_key %}<span class="pill ok">API Key 已配置</span>{% else %}<span class="pill warn">API Key 未配置</span>{% endif %}
+      </div>
+      <div class="srow">
+        <label for="provider">服务类型</label>
+        <select id="provider" onchange="applyPreset()">
+          <option value="deepseek" {{ 'selected' if current.provider == 'deepseek' else '' }}>DeepSeek（推荐，便宜）</option>
+          <option value="openai" {{ 'selected' if current.provider == 'openai' else '' }}>OpenAI</option>
+          <option value="ollama" {{ 'selected' if current.provider == 'ollama' else '' }}>本地 Ollama（免费）</option>
+          <option value="custom" {{ 'selected' if current.provider == 'custom' else '' }}>自定义 OpenAI 兼容接口</option>
+        </select>
+      </div>
+      <div class="srow">
+        <label for="baseUrl">Base URL</label>
+        <input id="baseUrl" spellcheck="false" value="{{ current.base_url }}" placeholder="https://api.deepseek.com">
+        <span class="hint">填到 /v1 或接口根路径都行，程序会自动补 <code>/chat/completions</code></span>
+      </div>
+      <div class="srow">
+        <label for="model">模型名</label>
+        <input id="model" spellcheck="false" value="{{ current.model }}" placeholder="deepseek-chat">
+      </div>
+      <div class="srow">
+        <label for="apiKey">API Key</label>
+        <input id="apiKey" type="password" spellcheck="false" autocomplete="off"
+               placeholder="{{ '已配置，留空则保持不变' if has_llm_key else 'sk-…' }}">
+      </div>
+      <div class="checks">
+        <label><input type="checkbox" id="jsonMode" {{ 'checked' if current.json_mode else '' }}> JSON 模式（response_format）</label>
+        <label><input type="checkbox" id="disableThinking" {{ 'checked' if current.disable_thinking else '' }}> 关闭思考模式（DeepSeek 建议开）</label>
+      </div>
+      <div class="sactions">
+        <button class="btn primary" onclick="saveSettings()">保存配置</button>
+        <button class="btn" onclick="testTarget('llm')">测试模型</button>
+      </div>
+      <div class="result" id="llmResult"></div>
+    </section>
+  </div>
+
+  <div class="foot">
+    保存后立即生效（无需重启）。环境变量优先级高于 <code>.env</code>；<code>.env</code> 已在 <code>.gitignore</code> 里，不会被提交。
+    {% if needs_setup %}<br>配置好后回到 <a href="/">信息流</a> 即可开始；如果还没有数据，先跑一次采集（见 README）。{% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PROVIDERS = {{ providers|tojson }};
+function $(id){ return document.getElementById(id); }
+
+function applyPreset(){
+  const p = $("provider").value;
+  const preset = PROVIDERS[p];
+  if(!preset) return;
+  if(preset.base_url) $("baseUrl").value = preset.base_url;
+  if(preset.model) $("model").value = preset.model;
+  $("jsonMode").checked = !!preset.json_mode;
+  $("disableThinking").checked = !!preset.disable_thinking;
+}
+
+async function saveSettings(){
+  const body = {
+    provider: $("provider").value,
+    base_url: $("baseUrl").value.trim(),
+    model: $("model").value.trim(),
+    json_mode: $("jsonMode").checked,
+    disable_thinking: $("disableThinking").checked,
+  };
+  const tok = $("ghToken").value.trim();
+  if(tok) body.github_token = tok;
+  const key = $("apiKey").value.trim();
+  if(key) body.api_key = key;
+  const box = $("llmResult");
+  box.className = "result"; box.textContent = "保存中…";
+  try{
+    const r = await fetch("/api/settings", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error || "保存失败");
+    box.className = "result ok";
+    box.textContent = `已保存：${d.provider} / ${d.model}（GitHub：${d.github_status}）`;
+    $("ghToken").value = ""; $("apiKey").value = "";
+    toast("配置已保存");
+  }catch(e){
+    box.className = "result err"; box.textContent = e.message;
+  }
+}
+
+async function testTarget(target){
+  const box = target === "github" ? $("ghResult") : $("llmResult");
+  box.className = "result"; box.textContent = "测试中…";
+  try{
+    const r = await fetch("/api/settings/test", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({target})});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error || "测试失败");
+    box.className = "result ok"; box.textContent = d.message;
+  }catch(e){
+    box.className = "result err"; box.textContent = e.message;
+  }
+}
+</script>
+{% endblock %}

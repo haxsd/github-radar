@@ -1,0 +1,11 @@
+﻿# 本地环境与数据（不要提交）
+.venv/
+data/
+.env
+.env.*
+!.env.example
+*.log
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

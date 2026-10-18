@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}日报 · GitHub 中文雷达{% endblock %}
+
+{% block style %}
+  .head{padding:10px 0 20px;border-bottom:1px solid var(--stroke);margin-bottom:24px;
+    display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+  .head h1{font-size:26px;margin:0 0 8px;letter-spacing:-.3px}
+  .head p{margin:0;color:var(--muted);font-size:13.5px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:18px}
+  .dcard{border-radius:18px;overflow:hidden;display:flex;flex-direction:column;
+    transition:.18s;border:1px solid var(--stroke);background:rgba(255,255,255,.025)}
+  .dcard:hover{transform:translateY(-3px);border-color:var(--stroke-strong);background:rgba(255,255,255,.05)}
+  .dthumb{aspect-ratio:16/9;overflow:hidden;background:rgba(255,255,255,.05);position:relative}
+  .dthumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .dbody{padding:14px 16px 16px;display:flex;flex-direction:column;gap:8px;flex:1}
+  .dname{font-size:15.5px;font-weight:700;letter-spacing:.1px;word-break:break-word}
+  .dname a:hover{color:#bcd3ff}
+  .ddesc{font-size:13px;color:#aab6c8;line-height:1.6;overflow:hidden;display:-webkit-box;
+    -webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .dmeta{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:auto;padding-top:6px}
+  .dchip{font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--stroke-strong);color:var(--text-dim)}
+  .dchip.cat{color:#9fb6ff;border-color:rgba(120,160,255,.3)}
+  .empty{padding:70px 20px;text-align:center;color:var(--muted)}
+  .empty h2{color:var(--text);font-size:20px;margin:10px 0}
+{% endblock %}
+
+{% block content %}
+<div class="wrap">
+  <div class="head">
+    <div>
+      <h1>日报</h1>
+      <p>过去 24 小时里最值得看的 {{ cards|length }} 个项目（按你的口味排序，每个领域最多 2 个）</p>
+    </div>
+    <span class="muted" style="font-size:12.5px">{{ (stats.last_wave_at or '')[:16] | replace('T',' ') }} 更新</span>
+  </div>
+
+  {% if cards %}
+  <div class="grid">
+    {% for c in cards %}
+    <a class="dcard" href="{{ c.html_url }}" target="_blank" rel="noreferrer">
+      <div class="dthumb"><img loading="lazy" alt="" src="/thumb/{{ c.repo_id }}?w=480"
+        onerror="this.style.display='none'"></div>
+      <div class="dbody">
+        <div class="dname">{{ c.full_name }}</div>
+        <div class="ddesc">{{ c.description_zh or c.description or '' }}</div>
+        <div class="dmeta">
+          {% if c.category %}<span class="dchip cat">{{ c.category }}</span>{% endif %}
+          {% if c.language %}<span class="dchip">{{ c.language }}</span>{% endif %}
+          <span>★ {{ c.stars }}</span>
+          {% if c.judgement %}<span class="dchip">{{ c.judgement }}</span>{% endif %}
+        </div>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty glass" style="border-radius:22px">
+    <div style="font-size:40px">📰</div>
+    <h2>今天的日报还没生成</h2>
+    <p>过去 24 小时没有新收录/更新事件，等下一波采集（00:00 / 08:00 / 16:00）。</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
