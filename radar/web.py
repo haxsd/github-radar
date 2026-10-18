@@ -1,4 +1,4 @@
-"""本地网页：信息流 / 榜单 / 收藏 + JSON API。"""
+﻿"""本地网页：信息流 / 榜单 / 收藏 + JSON API。"""
 
 from __future__ import annotations
 
@@ -91,7 +91,6 @@ def settings_page():
         },
         github_status=config.github_token_status(),
         has_llm_key=bool(config.LLM_API_KEY),
-        env_path=str(config.ENV_PATH),
         web_port=config.WEB_PORT,
     )
 
