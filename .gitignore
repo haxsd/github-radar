@@ -1,4 +1,4 @@
-# 本地环境与数据（不要提交）
+﻿# 本地环境与数据（不要提交）
 .venv/
 data/
 .env
@@ -14,3 +14,4 @@ Thumbs.db
 dist/
 build/
 *.spec
+*.zip
