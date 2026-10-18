@@ -155,6 +155,11 @@ class GitHub:
         if resp is None:
             return []
         data = resp.json()
-        if "errors" in data:
-            raise GitHubError(f"GraphQL: {data['errors']}")
-        return [n for n in (data.get("data") or {}).get("nodes") or [] if n]
+        nodes = [n for n in (data.get("data") or {}).get("nodes") or [] if n]
+        errors = data.get("errors") or []
+        if errors:
+            # 仓库被删除/转移后节点会 NOT_FOUND：只跳过这些，不让整批更新失败
+            fatal = [e for e in errors if e.get("type") != "NOT_FOUND"]
+            if fatal:
+                raise GitHubError(f"GraphQL: {fatal}")
+        return nodes
