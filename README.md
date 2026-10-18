@@ -12,6 +12,7 @@
 
 | 方式 | 适合 | 命令 |
 |---|---|---|
+| **下载 exe** | 不想装 Python | 去 [Releases](https://github.com/haxsd/github-radar/releases) 下 `StarScout-win64.zip`，解压双击 `StarScout.exe` |
 | **桌面应用** | 自己电脑上日常用 | `python desktop.py`，或打包成 `StarScout.exe` |
 | **网页服务** | 想扔到 NAS / 服务器 | `python -m radar.web` |
 | **Docker** | 一条命令部署 | `docker compose up -d --build` |
