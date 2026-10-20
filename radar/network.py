@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Any
 
 import requests
@@ -205,13 +205,31 @@ def check_all(force: bool = False) -> dict[str, Any]:
             return cached
 
     started = time.time()
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        futures = {
-            "github": pool.submit(_check_github),
-            "images": pool.submit(_check_images),
-            "llm": pool.submit(_check_llm),
-        }
-        targets = {name: future.result() for name, future in futures.items()}
+    # DNS 解析本身不受 requests timeout 控制，极端网络下单个检测可能远超 6s；
+    # 这里加一个总上限，保证设置页/顶栏请求不会长期挂住。
+    overall_timeout = CHECK_TIMEOUT * 2
+    executor = ThreadPoolExecutor(max_workers=3)
+    futures = {
+        "github": executor.submit(_check_github),
+        "images": executor.submit(_check_images),
+        "llm": executor.submit(_check_llm),
+    }
+    done, _pending = wait(futures.values(), timeout=overall_timeout)
+    targets: dict[str, dict[str, Any]] = {}
+    try:
+        for name, future in futures.items():
+            if future in done:
+                targets[name] = future.result()
+            else:
+                targets[name] = {
+                    "ok": False,
+                    "latency_ms": int(overall_timeout * 1000),
+                    "error": "Timeout",
+                    "message": "检测超时",
+                    "hint": "网络/DNS 响应过慢；可稍后重试或配置代理",
+                }
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
     result: dict[str, Any] = {
         "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),

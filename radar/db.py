@@ -91,10 +91,17 @@ CREATE TABLE IF NOT EXISTS meta (
 
 CREATE INDEX IF NOT EXISTS idx_repos_hidden ON repos(hidden);
 CREATE INDEX IF NOT EXISTS idx_events_ready ON events(card_ready, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_events_repo ON events(repo_id);
 CREATE INDEX IF NOT EXISTS idx_repos_pushed ON repos(pushed_at);
+CREATE INDEX IF NOT EXISTS idx_snapshots_time ON snapshots(captured_on);
+CREATE INDEX IF NOT EXISTS idx_saves_time ON saves(saved_at);
 CREATE INDEX IF NOT EXISTS idx_repo_tags_tag ON repo_tags(tag);
 CREATE INDEX IF NOT EXISTS idx_repo_tags_kind ON repo_tags(kind);
 """
+
+# 改 SCHEMA（新增表/列/索引）时必须 +1；init_db 用 PRAGMA user_version 做一次性初始化，
+# 避免每次连接数据库都重新解析执行整套 DDL。
+SCHEMA_VERSION = 1
 
 
 def now_iso() -> str:
@@ -111,6 +118,13 @@ def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(config.DB_PATH, timeout=20)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    # WAL 下 NORMAL 足够安全，写入明显更快（采集时网页端更少等待）
+    conn.execute("PRAGMA synchronous=NORMAL")
+    # 本地库偏读多写少：给 SQLite 8MB 页缓存 + 内存临时表，减少重复磁盘读
+    # （缓存按连接计算，网页端可能同时有多个连接，不宜设得过大）
+    conn.execute("PRAGMA cache_size=-8000")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA mmap_size=268435456")
     # 采集进程写入时，网页端的保存/跳过要能等一会儿而不是直接报 locked
     conn.execute("PRAGMA busy_timeout=20000")
     return conn
@@ -119,19 +133,47 @@ def connect() -> sqlite3.Connection:
 def init_db(conn: sqlite3.Connection | None = None) -> None:
     own = conn is None
     conn = conn or connect()
-    conn.executescript(SCHEMA)
-    # 老库自动补列
-    cols = {r["name"] for r in conn.execute("PRAGMA table_info(repos)").fetchall()}
-    if "points" not in cols:
-        conn.execute("ALTER TABLE repos ADD COLUMN points TEXT")
-    if "hidden" not in cols:
-        conn.execute("ALTER TABLE repos ADD COLUMN hidden INTEGER DEFAULT 0")
-        conn.execute("ALTER TABLE repos ADD COLUMN hidden_reason TEXT")
-    if "og_image" not in cols:
-        conn.execute("ALTER TABLE repos ADD COLUMN og_image TEXT")
-    conn.commit()
+    version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if version < SCHEMA_VERSION:
+        conn.executescript(SCHEMA)
+        # 老库自动补列（逐列判断，避免 hidden 存在但 hidden_reason 缺失时漏补）
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(repos)").fetchall()}
+        for name, ddl in (
+            ("points", "TEXT"),
+            ("hidden", "INTEGER DEFAULT 0"),
+            ("hidden_reason", "TEXT"),
+            ("og_image", "TEXT"),
+        ):
+            if name not in cols:
+                conn.execute(f"ALTER TABLE repos ADD COLUMN {name} {ddl}")
+        _normalize_legacy_event_times(conn)
+        conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        conn.commit()
     if own:
         conn.close()
+
+
+def _normalize_legacy_event_times(conn: sqlite3.Connection) -> None:
+    """把旧版本写入的 UTC 事件时间统一成本地时区（只跑一次）。
+
+    旧版 release 事件直接存 GitHub 的 ``publishedAt``（带 Z），和 now_iso()
+    的本地时间混在一起，按字符串排序/筛选会差几个小时。
+    """
+    if meta_get(conn, "event_tz_local_v1") == "1":
+        return
+    rows = conn.execute(
+        "SELECT id, occurred_at FROM events WHERE occurred_at LIKE '%Z' OR occurred_at LIKE '%+00:00'"
+    ).fetchall()
+    for row in rows:
+        try:
+            dt = datetime.fromisoformat(row["occurred_at"].replace("Z", "+00:00")).astimezone()
+        except (TypeError, ValueError):
+            continue
+        conn.execute(
+            "UPDATE events SET occurred_at=? WHERE id=?",
+            (dt.isoformat(timespec="seconds"), row["id"]),
+        )
+    meta_set(conn, "event_tz_local_v1", "1")
 
 
 # ---------------- meta ----------------

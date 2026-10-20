@@ -82,6 +82,17 @@ class _TempThumbTestCase(unittest.TestCase):
             conn.close()
 
 
+class TestThumbWidth(unittest.TestCase):
+    def test_width_is_snapped_to_standard_sizes(self):
+        self.assertEqual(web._normalize_thumb_width("240"), 240)
+        self.assertEqual(web._normalize_thumb_width("480"), 480)
+        self.assertEqual(web._normalize_thumb_width("960"), 960)
+        self.assertEqual(web._normalize_thumb_width("999"), 960)
+        self.assertEqual(web._normalize_thumb_width("160"), 240)
+        self.assertEqual(web._normalize_thumb_width("abc"), 240)
+        self.assertEqual(web._normalize_thumb_width(None, 480), 480)
+
+
 class TestThumbEndpointNonBlocking(_TempThumbTestCase):
     def test_cache_miss_returns_placeholder_immediately(self):
         rid = self._insert_repo(SAFE_OG)

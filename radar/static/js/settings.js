@@ -136,8 +136,21 @@ async function testTarget(target){
   const box = target === "github" ? $("ghResult") : $("llmResult");
   if(!writableGuard(box)) return;
   box.className = "result"; box.textContent = "测试中…";
+  const body = {target, ...adminPayload()};
+  if(target === "llm"){
+    body.provider = $("provider").value;
+    body.base_url = $("baseUrl").value.trim();
+    body.model = $("model").value.trim();
+    body.json_mode = $("jsonMode").checked;
+    body.disable_thinking = $("disableThinking").checked;
+    const key = $("apiKey").value.trim();
+    if(key) body.api_key = key;
+  } else if(target === "github"){
+    const token = $("ghToken").value.trim();
+    if(token) body.github_token = token;
+  }
   try{
-    const r = await fetch("/api/settings/test", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({target, ...adminPayload()})});
+    const r = await fetch("/api/settings/test", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
     const d = await r.json();
     if(!d.ok) throw new Error(d.error || "测试失败");
     box.className = "result ok"; box.textContent = d.message;

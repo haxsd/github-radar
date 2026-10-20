@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import re
 import unittest
 from pathlib import Path
 
@@ -42,6 +41,7 @@ class TestPackagingFiles(unittest.TestCase):
     def test_requirements_include_tray(self):
         req = (ROOT / "requirements.txt").read_text(encoding="utf-8")
         self.assertIn("pystray", req)
+        self.assertIn("waitress", req)
 
     def test_desktop_cli(self):
         desktop = (ROOT / "desktop.py").read_text(encoding="utf-8")

@@ -55,9 +55,10 @@ _MUTEX_HANDLE = None
 # ---------------- 进程/窗口基础 ----------------
 
 def _port_in_use(host: str, port: int) -> bool:
+    probe_host = "127.0.0.1" if host in ("", "0.0.0.0", "::") else host
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.5)
-        return sock.connect_ex((host, port)) == 0
+        return sock.connect_ex((probe_host, port)) == 0
 
 
 def _wait_port(host: str, port: int, timeout: float = 20.0) -> bool:
@@ -157,7 +158,9 @@ def _tray_image():
 
     path = config.assets_dir() / "icon.png"
     try:
-        return Image.open(path)
+        with Image.open(path) as img:
+            # copy 后关闭文件句柄，避免托盘长期占用安装目录里的图标文件
+            return img.copy()
     except Exception:
         image = Image.new("RGBA", (64, 64), (91, 140, 255, 255))
         return image
@@ -275,6 +278,8 @@ def _import_data(source: str) -> int:
     data_src = src / "data" if (src / "data").is_dir() else src
     config.ensure_dirs()
     shutil.copytree(data_src, config.DATA_DIR, dirs_exist_ok=True)
+    # 旧目录里可能残留采集锁，导入后不要让新程序误以为有任务在跑
+    (config.DATA_DIR / ".collect.lock").unlink(missing_ok=True)
     env_src = src / ".env"
     if not env_src.exists() and (data_src / ".env").exists():
         env_src = data_src / ".env"

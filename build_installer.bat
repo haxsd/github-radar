@@ -27,5 +27,6 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo Done: dist\GitHubRadar-Setup-0.6.2.exe
+echo Done. Installer written to the dist folder:
+dir /b "dist\GitHubRadar-Setup-*.exe"
 pause

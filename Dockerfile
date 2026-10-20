@@ -19,4 +19,7 @@ COPY README.md LICENSE .env.example ./
 VOLUME ["/app/data"]
 EXPOSE 8765
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/api/stats' % os.environ.get('WEB_PORT', '8765'), timeout=4)"
+
 CMD ["python", "-m", "radar.web"]

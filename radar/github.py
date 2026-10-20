@@ -40,7 +40,14 @@ class GitHub:
     # ---------- 基础请求 ----------
     def _request(self, method: str, url: str, **kw: Any) -> requests.Response | None:
         for attempt in range(4):
-            resp = self.session.request(method, url, timeout=40, **kw)
+            try:
+                resp = self.session.request(method, url, timeout=40, **kw)
+            except requests.RequestException as exc:
+                # 连接失败/超时也重试；之前只重试 HTTP 状态码，网络一抖整波采集就失败
+                if attempt == 3:
+                    raise GitHubError(f"网络请求失败（重试耗尽）: {url}: {exc}") from exc
+                time.sleep(2 * (attempt + 1))
+                continue
             if resp.status_code == 404:
                 return None
             if resp.status_code in (403, 429):

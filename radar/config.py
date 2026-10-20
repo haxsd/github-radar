@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -84,6 +85,13 @@ def migrate_legacy_layout() -> None:
     try:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         shutil.move(str(legacy_db), str(DB_PATH))
+        # WAL 模式下数据可能还在 -wal 文件里，只搬主库会丢最近写入
+        for suffix in ("-wal", "-shm"):
+            sidecar = BASE_DIR / f"radar.db{suffix}"
+            if sidecar.exists():
+                target = DATA_DIR / f"radar.db{suffix}"
+                target.unlink(missing_ok=True)
+                shutil.move(str(sidecar), str(target))
         for name in ("thumbs", "logs"):
             source = BASE_DIR / name
             if source.is_dir():
@@ -194,9 +202,9 @@ def _load() -> None:
     GITHUB_TOKEN = _env("GITHUB_TOKEN") or _env("GH_TOKEN")
     GH_CLI_PATH = _env("GH_CLI_PATH")
 
-    # 兼容旧版 DEEPSEEK_* 变量名
+    # 兼容旧版 DEEPSEEK_* 变量名；没有显式指定时沿用 deepseek
     legacy_key = _env("DEEPSEEK_API_KEY")
-    provider = (_env("LLM_PROVIDER") or ("deepseek" if legacy_key or _env("DEEPSEEK_BASE_URL") else "deepseek")).lower()
+    provider = (_env("LLM_PROVIDER") or "deepseek").lower()
     if provider not in PROVIDERS:
         provider = "custom"
     preset = PROVIDERS[provider]
@@ -257,23 +265,37 @@ STAR_JUMP_ABS = 50      # 24h 内 +50★
 STAR_JUMP_RATIO = 0.30  # 或 +30%
 
 
-def llm_config() -> dict[str, object]:
-    """当前生效的模型服务配置。"""
-    base = (LLM_BASE_URL or "").rstrip("/")
+def chat_completions_url(base_url: str) -> str:
+    """把用户填的 Base URL 规范成 /chat/completions 完整地址。"""
+    base = (base_url or "").strip().rstrip("/")
+    if not base:
+        return ""
     if base.endswith("/chat/completions"):
-        chat_url = base
-    elif base.endswith("/v1"):
-        chat_url = base + "/chat/completions"
-    else:
-        chat_url = base + "/chat/completions"
+        return base
+    return base + "/chat/completions"
+
+
+def llm_config(overrides: dict[str, object] | None = None) -> dict[str, object]:
+    """当前生效的模型服务配置。
+
+    ``overrides`` 用于设置页“测试连接”：临时测试表单里尚未保存的值，
+    不写 .env、也不改全局配置。
+    """
+    values = overrides or {}
+
+    def _pick(key: str, current: object) -> object:
+        value = values.get(key)
+        return current if value is None else value
+
+    base = str(_pick("base_url", LLM_BASE_URL) or "").strip()
     return {
-        "provider": LLM_PROVIDER,
-        "base_url": base,
-        "chat_url": chat_url,
-        "model": LLM_MODEL,
-        "api_key": LLM_API_KEY,
-        "json_mode": LLM_JSON_MODE,
-        "disable_thinking": LLM_DISABLE_THINKING,
+        "provider": str(_pick("provider", LLM_PROVIDER) or LLM_PROVIDER),
+        "base_url": base.rstrip("/"),
+        "chat_url": chat_completions_url(base),
+        "model": str(_pick("model", LLM_MODEL) or ""),
+        "api_key": str(_pick("api_key", LLM_API_KEY) or ""),
+        "json_mode": bool(_pick("json_mode", LLM_JSON_MODE)),
+        "disable_thinking": bool(_pick("disable_thinking", LLM_DISABLE_THINKING)),
     }
 
 
@@ -294,7 +316,7 @@ def resolve_github_token() -> str:
     if exe and Path(exe).exists():
         try:
             out = subprocess.run(
-                [exe, "auth", "token"], capture_output=True, text=True, timeout=20
+                [exe, "auth", "token"], capture_output=True, text=True, timeout=20, check=False
             )
             token = (out.stdout or "").strip()
             if token:
@@ -306,19 +328,35 @@ def resolve_github_token() -> str:
     )
 
 
+_GH_STATUS_CACHE: tuple[float, str, str] | None = None
+
+
 def github_token_status() -> str:
-    """用于设置页展示：env / gh-cli / 未配置。"""
+    """用于设置页展示：env / gh-cli / 未配置。
+
+    没有 GITHUB_TOKEN 时会调用 ``gh auth token``，每次页面渲染都跑子进程太慢，
+    因此把 gh CLI 的检测结果缓存 60 秒；GITHUB_TOKEN 本身是内存变量，始终实时。
+    """
+    global _GH_STATUS_CACHE
     if GITHUB_TOKEN:
         return "env"
     exe = GH_CLI_PATH or shutil.which("gh")
+    fingerprint = exe or ""
+    now = time.monotonic()
+    if _GH_STATUS_CACHE and _GH_STATUS_CACHE[1] == fingerprint and now < _GH_STATUS_CACHE[0]:
+        return _GH_STATUS_CACHE[2]
+    status = "missing"
     if exe and Path(exe).exists():
         try:
-            out = subprocess.run([exe, "auth", "token"], capture_output=True, text=True, timeout=10)
+            out = subprocess.run(
+                [exe, "auth", "token"], capture_output=True, text=True, timeout=10, check=False
+            )
             if (out.stdout or "").strip():
-                return "gh-cli"
+                status = "gh-cli"
         except Exception as exc:
             logger.debug("检测 gh CLI 登录态失败: %s", exc)
-    return "missing"
+    _GH_STATUS_CACHE = (now + 60.0, fingerprint, status)
+    return status
 
 
 # ---- 保存设置（写回 .env 并热加载）----

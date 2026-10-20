@@ -7,6 +7,7 @@ import logging
 import math
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -45,7 +46,7 @@ def affinity(conn) -> dict[str, float]:
         """SELECT t.tag, s.action, COUNT(*) AS n
            FROM seen s JOIN repo_tags t ON t.repo_id = s.repo_id
            WHERE s.action IN ('save','like','skip')
-             AND t.kind IN ('cat','platform','feature')
+             AND t.kind IN ('cat','platform','feature','form')
            GROUP BY t.tag, s.action"""
     ).fetchall()
     pos: dict[str, float] = {}
@@ -108,6 +109,7 @@ def _to_card(row: Any, score: float, tags: list[str]) -> dict[str, Any]:
         "full_name": row["full_name"],
         "html_url": row["html_url"],
         "description_zh": row["description_zh"],
+        "description": row["description"],
         "summary_zh": row["summary_zh"],
         "points": _json_field(row["points"], []),
         "judgement": row["judgement"],
@@ -138,6 +140,24 @@ def _split_tags(tags: list[str] | None, category: str | None) -> list[str]:
         if t and t not in out:
             out.append(t)
     return out[:6]
+
+
+def _mark_shown_many(ids: list[int]) -> None:
+    try:
+        worker_conn = db.connect()
+        db.init_db(worker_conn)
+        try:
+            for repo_id in ids:
+                db.mark_seen(worker_conn, repo_id, "shown")
+            worker_conn.commit()
+        finally:
+            worker_conn.close()
+    except Exception as exc:
+        logger.warning("后台标记已读失败，下次请求会重试: %s", exc)
+
+
+# 单线程队列：标记已读不阻塞请求，也不会因为并发的信息流请求无限创建线程
+_SEEN_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mark-seen")
 
 
 def next_cards(
@@ -192,21 +212,11 @@ def next_cards(
     conn.close()
 
     if mark_shown and cards:
-        # 标记已读放到后台线程：不阻塞接口响应
         ids = [c["repo_id"] for c in cards]
-
-        def _mark_shown() -> None:
-            try:
-                worker_conn = db.connect()
-                db.init_db(worker_conn)
-                for repo_id in ids:
-                    db.mark_seen(worker_conn, repo_id, "shown")
-                worker_conn.commit()
-                worker_conn.close()
-            except Exception as exc:
-                logger.warning("后台标记已读失败，下次请求会重试: %s", exc)
-
-        threading.Thread(target=_mark_shown, daemon=True).start()
+        try:
+            _SEEN_EXECUTOR.submit(_mark_shown_many, ids)
+        except RuntimeError as exc:  # 解释器退出时线程池可能已关闭
+            logger.debug("提交标记已读任务失败: %s", exc)
     return cards
 
 
@@ -500,7 +510,7 @@ def card_by_id(repo_id: int) -> dict[str, Any] | None:
     """单仓库详情（榜单/收藏等页面点击行时用）。"""
     conn = db.connect()
     db.init_db(conn)
-    row = conn.execute("SELECT * FROM repos WHERE id=?", (repo_id,)).fetchone()
+    row = conn.execute("SELECT * FROM repos WHERE id=? AND hidden=0", (repo_id,)).fetchone()
     if not row:
         conn.close()
         return None
@@ -517,14 +527,14 @@ _CACHE_LOCK = threading.Lock()
 
 
 def _cached(key: str, ttl: float, fn):
-    now = time.time()
     with _CACHE_LOCK:
         hit = _CACHE.get(key)
-        if hit and now - hit[0] < ttl:
+        if hit and time.time() - hit[0] < ttl:
             return hit[1]
     value = fn()
     with _CACHE_LOCK:
-        _CACHE[key] = (now, value)
+        # 用计算完成时间，避免慢查询（例如网络/大库）刚算完就过期
+        _CACHE[key] = (time.time(), value)
     return value
 
 

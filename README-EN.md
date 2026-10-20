@@ -19,7 +19,7 @@
 
 Download the single installer from [Releases](https://github.com/haxsd/github-radar/releases/latest):
 
-- `GitHubRadar-Setup-0.6.2.exe`: double-click to install, no admin rights required; Start menu / desktop shortcuts and a system tray icon; uninstall via Settings → Apps.
+- `GitHubRadar-Setup-0.7.0.exe`: double-click to install, no admin rights required; Start menu / desktop shortcuts and a system tray icon; uninstall via Settings → Apps.
 - Data is stored under `%LOCALAPPDATA%\GitHubRadar\` (database, thumbnail cache, logs, `.env`).
 - Migrating from an older portable folder: run `StarScout.exe --import-data "old-folder-path"`, or copy the old `data\` and `.env` into that data folder.
 
@@ -58,6 +58,7 @@ On Windows, `collect_bg.bat` (headless collection) and `start_web.bat` can be sc
 ## Documentation
 
 - [docs/design.md](docs/design.md): web UI design tokens and component conventions
+- [CHANGELOG.md](CHANGELOG.md): release notes
 - [CONTRIBUTING.md](CONTRIBUTING.md): contribution guidelines
 - [packaging/使用说明.txt](packaging/使用说明.txt): desktop app install and usage notes (Chinese)
 - [Releases](https://github.com/haxsd/github-radar/releases): versions and downloads

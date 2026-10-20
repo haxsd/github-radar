@@ -63,6 +63,19 @@ class TestSettingsEndpoints(unittest.TestCase):
             path, json=payload, environ_base={"REMOTE_ADDR": remote_addr}
         )
 
+    def test_security_headers_and_api_no_store(self):
+        page = self.client.get("/")
+        self.assertEqual(page.headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(page.headers.get("X-Frame-Options"), "DENY")
+        api = self.client.get("/api/stats")
+        self.assertEqual(api.headers.get("Cache-Control"), "no-store")
+
+    def test_json_keeps_chinese_readable(self):
+        resp = self.client.get("/api/categories")
+        self.assertIn("application/json", resp.headers.get("Content-Type", ""))
+        text = resp.get_data(as_text=True)
+        self.assertNotIn("\\u", text, "中文标签不应被转义成 \\uXXXX")
+
     def test_remote_save_without_token_forbidden(self):
         with mock.patch.object(config, "WEB_ADMIN_TOKEN", "", create=True), mock.patch(
             "radar.web.config.save_env"
@@ -115,6 +128,54 @@ class TestSettingsEndpoints(unittest.TestCase):
         ):
             resp = self._post("/api/settings/test", {"target": "github"}, REMOTE)
         self.assertEqual(resp.status_code, 403, "公网地址无口令调测试接口必须 403")
+
+    def test_llm_test_uses_form_values_without_saving(self):
+        payload = {
+            "target": "llm",
+            "provider": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-4o-mini",
+            "api_key": "sk-test",
+            "json_mode": False,
+            "disable_thinking": False,
+        }
+        with mock.patch.object(config, "WEB_ADMIN_TOKEN", "", create=True), mock.patch(
+            "radar.web.llm._chat_json", return_value={"ok": True}
+        ) as chat, mock.patch("radar.web.config.save_env") as save_env:
+            resp = self._post("/api/settings/test", payload, LOOPBACK)
+        self.assertEqual(resp.status_code, 200)
+        cfg = chat.call_args.kwargs["cfg_override"]
+        self.assertEqual(cfg["provider"], "openai")
+        self.assertEqual(cfg["base_url"], "https://api.openai.com/v1")
+        self.assertEqual(cfg["model"], "gpt-4o-mini")
+        self.assertEqual(cfg["api_key"], "sk-test")
+        self.assertFalse(cfg["json_mode"])
+        save_env.assert_not_called()
+
+    def test_github_test_uses_form_token_without_saving(self):
+        response = mock.Mock(status_code=200)
+        response.json.return_value = {"login": "tester"}
+        with mock.patch.object(config, "WEB_ADMIN_TOKEN", "", create=True), mock.patch(
+            "radar.web.requests.get", return_value=response
+        ) as get, mock.patch(
+            "radar.web.config.resolve_github_token", side_effect=AssertionError("不应读取已保存 token")
+        ):
+            resp = self._post(
+                "/api/settings/test",
+                {"target": "github", "github_token": "ghp_test"},
+                LOOPBACK,
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("ghp_test", get.call_args.kwargs["headers"]["Authorization"])
+
+    def test_remote_demo_load_forbidden(self):
+        """远程访客不能往本地库里写示例数据。"""
+        with mock.patch.object(config, "WEB_ADMIN_TOKEN", "", create=True), mock.patch(
+            "radar.demo.load_demo", side_effect=AssertionError("无口令不得写库")
+        ) as load_demo:
+            resp = self._post("/api/demo/load", {}, REMOTE)
+        self.assertEqual(resp.status_code, 403)
+        load_demo.assert_not_called()
 
     def test_fetch_image_bytes_rejects_unsafe_before_request(self):
         with mock.patch(

@@ -6,5 +6,11 @@ build/
 *.spec
 __pycache__/
 *.pyc
+*.zip
 .git/
-docs/screenshots/demo.gif
+.ruff_cache/
+.pytest_cache/
+tests/
+scripts/
+docs/
+.github/

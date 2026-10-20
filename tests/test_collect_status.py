@@ -145,6 +145,44 @@ class _FakeGitHub:
         return [self.node]
 
 
+class TestUpdateCreatesSchema(_TempConfigTestCase):
+    def test_update_on_fresh_db_initializes_schema(self):
+        self.assertFalse(config.DB_PATH.exists())
+        events = collect.cmd_update(gh=_FakeGitHub({}), limit=10)
+        self.assertEqual(events, 0)
+        self.assertTrue(config.DB_PATH.exists(), "update 应自动建表，而不是报表不存在")
+
+
+class TestLegacyEventTimezone(unittest.TestCase):
+    def test_utc_event_time_is_normalized_once(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            originals = (config.DATA_DIR, config.DB_PATH, config.ENV_PATH)
+            config.DATA_DIR = Path(tmp)
+            config.DB_PATH = config.DATA_DIR / "radar.db"
+            config.ENV_PATH = config.DATA_DIR / ".env"
+            conn = db.connect()
+            try:
+                db.init_db(conn)
+                conn.execute("DELETE FROM meta WHERE key='event_tz_local_v1'")
+                conn.execute("PRAGMA user_version=0")
+                conn.execute(
+                    "INSERT INTO events (repo_id, kind, occurred_at, payload) VALUES (?,?,?,?)",
+                    (1, "release", "2026-10-20T00:00:00Z", "{}"),
+                )
+                conn.commit()
+                db.init_db(conn)
+                ts = conn.execute("SELECT occurred_at FROM events").fetchone()["occurred_at"]
+                self.assertNotIn("Z", ts)
+                self.assertIsNotNone(datetime.fromisoformat(ts).utcoffset())
+                self.assertEqual(
+                    db.meta_get(conn, "event_tz_local_v1"), "1", "迁移标记只应写一次"
+                )
+            finally:
+                conn.close()
+                config.DATA_DIR, config.DB_PATH, config.ENV_PATH = originals
+                config._load()
+
+
 class TestUpdateFailureRecorded(_TempConfigTestCase):
     def test_db_error_records_update_scope(self):
         conn = db.connect()

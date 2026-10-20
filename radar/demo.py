@@ -92,7 +92,7 @@ def load_demo(conn=None) -> dict[str, int]:
                     int(item.get("forks") or 0),
                     0,
                     0,
-                    8.0,
+                    0.8,
                     item.get("created_at") or seen_at,
                     item.get("pushed_at") or seen_at,
                     seen_at,
@@ -158,8 +158,12 @@ def reset_demo(conn=None) -> int:
         conn.execute("DELETE FROM repo_tags WHERE repo_id=?", (repo_id,))
         conn.execute("DELETE FROM snapshots WHERE repo_id=?", (repo_id,))
         conn.execute("DELETE FROM events WHERE repo_id=?", (repo_id,))
+        # 必须一并清理用户行为，否则 SQLite 复用 repo id 时会串到新项目上
+        conn.execute("DELETE FROM seen WHERE repo_id=?", (repo_id,))
+        conn.execute("DELETE FROM saves WHERE repo_id=?", (repo_id,))
         conn.execute("DELETE FROM repos WHERE id=?", (repo_id,))
         removed += 1
+    conn.execute("DELETE FROM meta WHERE key='demo_loaded_at'")
     conn.commit()
     if own:
         conn.close()

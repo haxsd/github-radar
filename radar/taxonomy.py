@@ -116,7 +116,7 @@ _CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
     "media": (
         "video", "audio", "image", "photo", "editor", "render", "ffmpeg", "music",
-        "design", "ffmpeg", "3d", "animation", "svg", "pdf",
+        "design", "3d", "animation", "svg", "pdf",
     ),
     "game": (
         "game", "engine", "emulator", "unity", "godot", "minecraft", "mod",
@@ -134,7 +134,7 @@ _CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
 
 _FORM_KEYWORDS: dict[str, tuple[str, ...]] = {
     "cli": ("cli", "command line", "command-line", "terminal", "shell", "tui"),
-    "library": ("library", "sdk", "package", "module", "api wrapper", "client for"),
+    "library": ("library", "sdk", "package", "module", "api wrapper", "client for", "api client", "client library"),
     "framework": ("framework", "toolkit", "engine"),
     "plugin": ("plugin", "extension", "addon", "add-on", "integration"),
     "template": ("template", "boilerplate", "starter", "scaffold"),
@@ -180,10 +180,35 @@ def _text(repo: dict[str, Any]) -> str:
     return " ".join(parts).lower()
 
 
+# 短关键词必须按“词”匹配：否则 ai 会命中 email/maintain，ml 会命中 html，
+# cli 会命中 client，gui 会命中 guide，规则兜底标签会大面积失真。
+_KEYWORD_PATTERNS: dict[str, re.Pattern[str]] = {}
+
+
+def _keyword_pattern(word: str) -> re.Pattern[str]:
+    pattern = _KEYWORD_PATTERNS.get(word)
+    if pattern is None:
+        # 只给字母数字开头/结尾加边界；像 .exe 这种以符号开头的词仍能匹配 tool.exe
+        left = r"(?<![0-9a-z])" if word[0].isascii() and word[0].isalnum() else ""
+        right = r"(?![0-9a-z])" if word[-1].isascii() and word[-1].isalnum() else ""
+        pattern = re.compile(left + re.escape(word) + right)
+        _KEYWORD_PATTERNS[word] = pattern
+    return pattern
+
+
+def _has_keyword(text: str, word: str) -> bool:
+    word = word.lower()
+    if not word:
+        return False
+    if word.isascii():
+        return bool(_keyword_pattern(word).search(text))
+    return word in text
+
+
 def _match(text: str, table: dict[str, tuple[str, ...]]) -> str | None:
     for key, words in table.items():
         for w in words:
-            if w in text and len(w) > 1:
+            if len(w) > 1 and _has_keyword(text, w):
                 return key
     return None
 
@@ -199,21 +224,24 @@ def rule_tags(repo: dict[str, Any]) -> list[tuple[str, str]]:
     form = _match(text, _FORM_KEYWORDS) or "other"
     tags.append((f"form:{form}", "form"))
 
+    platform_tags: list[tuple[str, str]] = []
     for key, words in _PLATFORM_KEYWORDS.items():
-        if any(w in text for w in words):
-            tags.append((f"platform:{key}", "platform"))
+        if any(_has_keyword(text, w) for w in words):
+            platform_tags.append((f"platform:{key}", "platform"))
             break
-    if tags and not any(t[1] == "platform" for t in tags):
-        tags.append(("platform:cross", "platform"))
+
+    # 语言 → 平台提示（兜底）；没有线索时才标「跨平台」，避免同时出现 web + cross
+    if not platform_tags:
+        lang = (repo.get("language") or "").lower()
+        if lang in ("javascript", "typescript", "html", "css", "vue", "svelte"):
+            platform_tags.append(("platform:web", "platform"))
+        else:
+            platform_tags.append(("platform:cross", "platform"))
+    tags.extend(platform_tags)
 
     for key, words in _FEATURE_KEYWORDS.items():
-        if any(w in text for w in words):
+        if any(_has_keyword(text, w) for w in words):
             tags.append((f"feature:{key}", "feature"))
-
-    # 语言 → 平台提示（兜底）
-    lang = (repo.get("language") or "").lower()
-    if lang in ("javascript", "typescript") and not any(t == "platform:web" for t in tags):
-        tags.append(("platform:web", "platform"))
     return tags
 
 
@@ -230,6 +258,11 @@ def valid_tag(tag: str) -> bool:
     return key in tables.get(kind, {})
 
 
+def _as_list(value: Any) -> list[Any]:
+    """LLM 偶尔把数组写成字符串/对象；只接受 list，其他一律当空。"""
+    return value if isinstance(value, list) else []
+
+
 def normalize_llm_tags(data: dict[str, Any]) -> list[tuple[str, str]]:
     """把 LLM 输出转成合法标签列表。"""
     tags: list[tuple[str, str]] = []
@@ -239,13 +272,13 @@ def normalize_llm_tags(data: dict[str, Any]) -> list[tuple[str, str]]:
     form = data.get("form")
     tags.append((f"form:{form}", "form") if form in FORMS else ("form:other", "form"))
 
-    for p in (data.get("platforms") or [])[:4]:
+    for p in _as_list(data.get("platforms"))[:4]:
         if p in PLATFORMS:
             tags.append((f"platform:{p}", "platform"))
-    for f in (data.get("features") or [])[:4]:
+    for f in _as_list(data.get("features"))[:4]:
         if f in FEATURES:
             tags.append((f"feature:{f}", "feature"))
-    for kw in (data.get("keywords") or [])[:4]:
+    for kw in _as_list(data.get("keywords"))[:4]:
         kw = re.sub(r"\s+", "", str(kw))[:12]
         if kw:
             tags.append((f"kw:{kw}", "kw"))

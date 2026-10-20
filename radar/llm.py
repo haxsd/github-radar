@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable
+from typing import Any
 
 import requests
 
@@ -31,7 +32,7 @@ TAG_FIELDS = f"""另外输出这些标签字段（受控词表，必须用 key�
 - features: 特性数组，从 [{_enum_text(taxonomy.FEATURES)}] 选 0~3 个
 - keywords: 中文关键词数组，1~4 个，每个不超过 6 个字，描述项目特点"""
 
-CARD_FIELDS = f"""输出这些文案字段：
+CARD_FIELDS = """输出这些文案字段：
 - desc_zh: 一句话说明这是什么，不超过 45 个汉字，要有信息量（别写"这是一个开源工具"这种空话）
 - summary_zh: 3~5 句、180~320 个汉字，像给朋友介绍一样讲清楚：
     ①它具体做什么、②解决什么痛点、③主要功能点（挑 2~3 个最关键的）、④适合谁用、⑤上手门槛或注意事项
@@ -44,6 +45,10 @@ CARD_FIELDS = f"""输出这些文案字段：
 
 class LLMError(RuntimeError):
     pass
+
+
+class _FatalLLMError(LLMError):
+    """401/403 这类重试无意义的错误。"""
 
 
 # 不走本机系统代理：并发调用时本机代理（如 127.0.0.1:7897）会排队卡死请求。
@@ -67,13 +72,17 @@ def _extract_json(content: str) -> dict[str, Any]:
         raise
 
 
-def _chat_json(messages: list[dict[str, str]], max_tokens: int = 900) -> dict[str, Any]:
+def _chat_json(
+    messages: list[dict[str, str]],
+    max_tokens: int = 900,
+    cfg_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """调用任意 OpenAI 兼容的 /chat/completions 接口，返回 JSON。"""
-    cfg = config.llm_config()
+    cfg = cfg_override or config.llm_config()
     if not cfg["chat_url"]:
         raise LLMError("模型地址未配置：请在网页「设置」里填写 Base URL")
-    # 默认直连（DeepSeek/Ollama 国内可直连）；配置 LLM_PROXY 时才走代理
-    _session.proxies = config.llm_proxies() or {}
+    if not cfg["model"]:
+        raise LLMError("模型名未配置：请在网页「设置」里填写模型名（如 deepseek-chat）")
     headers = {"Content-Type": "application/json", "Connection": "close"}
     if cfg["api_key"]:
         headers["Authorization"] = f"Bearer {cfg['api_key']}"
@@ -86,12 +95,13 @@ def _chat_json(messages: list[dict[str, str]], max_tokens: int = 900) -> dict[st
     }
     if cfg["json_mode"]:
         payload["response_format"] = {"type": "json_object"}
-    if cfg["disable_thinking"]:
-        # DeepSeek 思考 token 会挤占输出预算，导致偶发空内容
+    if cfg["disable_thinking"] and cfg["provider"] == "deepseek":
+        # DeepSeek 思考 token 会挤占输出预算，导致偶发空内容；其他兼容接口不认识这个字段
         payload["thinking"] = {"type": "disabled"}
 
     last_err: Exception | None = None
     json_mode = bool(cfg["json_mode"])
+    proxies = config.llm_proxies() or {}
     for attempt in range(3):
         try:
             resp = _session.post(
@@ -99,7 +109,11 @@ def _chat_json(messages: list[dict[str, str]], max_tokens: int = 900) -> dict[st
                 headers=headers,
                 json=payload,
                 timeout=(15, 60),
+                proxies=proxies,
             )
+            if resp.status_code in (401, 403):
+                # Key 无效/无权限：重试没有意义，直接返回可读错误
+                raise _FatalLLMError(f"{resp.status_code}: {resp.text[:200]}")
             if resp.status_code >= 400 and json_mode and "response_format" in resp.text.lower():
                 # 部分兼容接口不支持 JSON 模式，去掉后重试
                 json_mode = False
@@ -111,6 +125,8 @@ def _chat_json(messages: list[dict[str, str]], max_tokens: int = 900) -> dict[st
             if not content.strip():
                 raise LLMError("模型返回空内容")
             return _extract_json(content)
+        except _FatalLLMError:
+            raise
         except Exception as exc:
             last_err = exc
             time.sleep(1.2 * (attempt + 1))

@@ -11,9 +11,7 @@ OUT = ROOT / "assets"
 
 
 def draw_icon(size: int = 1024) -> Image.Image:
-    layers = []
     # 深色背景 + 渐变光晕
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     bg = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     bd = ImageDraw.Draw(bg)
     radius = int(size * 0.22)

@@ -76,9 +76,9 @@ function rowHTML(c, idx){
       <div class="stars">★ <b>${fmtStars(c.stars)}</b>${deltaText(c)}</div>
       <div class="rowacts">
         <button type="button" class="minibtn save" title="收藏（S）" aria-label="收藏 ${esc(c.full_name)}"
-          onclick="event.stopPropagation();act(${idx},'save')">${ICON.bookmark}收藏</button>
+          onclick="event.stopPropagation();actRepo(${c.repo_id},'save')">${ICON.bookmark}收藏</button>
         <button type="button" class="minibtn skip" title="跳过（X）" aria-label="跳过 ${esc(c.full_name)}"
-          onclick="event.stopPropagation();act(${idx},'skip')">${ICON.skip}跳过</button>
+          onclick="event.stopPropagation();actRepo(${c.repo_id},'skip')">${ICON.skip}跳过</button>
       </div>
     </div>
   </div>`;
@@ -355,7 +355,9 @@ async function cardAct(repoId, action){
   }
 }
 function removeRow(i){
-  const row=document.querySelectorAll("#rows .row")[i];
+  const card=state.cards[i]; if(!card) return;
+  // 按 repo_id 找 DOM 行：删行动画期间 DOM 里还留着上一行，用索引会删错
+  const row=document.querySelector('#rows .row[data-id="' + card.repo_id + '"]');
   if(row){ row.classList.add("removing"); setTimeout(()=>row.remove(),200); }
   state.cards.splice(i,1);
   const remain=document.querySelectorAll("#rows .row");
@@ -373,6 +375,11 @@ function act(i, action){
   closeDetail();
   window.toast(labels[action]||"OK");
   if(action==="save"||action==="skip") removeRow(i);
+}
+// 行内按钮按 repo_id 操作：删行后 data-idx 会重排，不能再依赖渲染时的旧索引
+function actRepo(repoId, action){
+  const i=state.cards.findIndex(c=>c.repo_id===repoId);
+  if(i>=0) act(i, action);
 }
 $("openPanel").onclick=openPanel;
 $("helpBtn").onclick=()=>{ openOverlay($("help"), ".helpbox"); };

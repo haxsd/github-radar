@@ -70,6 +70,8 @@ class TestDataDirResolution(unittest.TestCase):
         legacy = Path(self.tmp.name) / "base"
         legacy.mkdir()
         (legacy / "radar.db").write_bytes(b"db")
+        (legacy / "radar.db-wal").write_bytes(b"wal")
+        (legacy / "radar.db-shm").write_bytes(b"shm")
         (legacy / "thumbs").mkdir()
         (legacy / "thumbs" / "1_240.jpg").write_bytes(b"jpg")
         data = legacy / "data"
@@ -82,6 +84,8 @@ class TestDataDirResolution(unittest.TestCase):
             with mock.patch.object(sys, "frozen", True, create=True):
                 config.migrate_legacy_layout()
             self.assertTrue((data / "radar.db").exists())
+            self.assertTrue((data / "radar.db-wal").exists(), "WAL 边车文件必须一起迁移")
+            self.assertTrue((data / "radar.db-shm").exists(), "SHM 边车文件必须一起迁移")
             self.assertTrue((data / "thumbs" / "1_240.jpg").exists())
             self.assertFalse((legacy / "radar.db").exists())
         finally:

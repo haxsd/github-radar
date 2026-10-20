@@ -11,6 +11,7 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate
 # macOS / Linux: source .venv/bin/activate
 pip install -r requirements.txt
+pip install ruff        # 可选：本地静态检查
 python -m radar.web     # 启动后访问 http://127.0.0.1:8765
 ```
 
@@ -18,9 +19,9 @@ python -m radar.web     # 启动后访问 http://127.0.0.1:8765
 
 ## 代码约定
 
-- Python 3.11+，标准库 + Flask + requests + python-dotenv + Pillow，**不要引入重量级依赖**
+- Python 3.11+，后端保持轻量：Flask + requests + python-dotenv + Pillow + pystray + waitress，**不要引入重量级依赖**
 - 函数、变量用英文命名，注释和用户可见文案用中文
-- 提交前跑一次 `python -m compileall radar` 确认语法没问题
+- 提交前跑一次 `python -m compileall radar` 和 `ruff check .` 确认语法/静态检查没问题
 - 涉及网页 / 采集 / 安全等行为改动，再跑一次行为测试：`python -m unittest discover -s tests -v`（CI 也会执行）
 - 采集、LLM、排序等核心逻辑改动，请在 PR 描述里写清楚「为什么这样改」和潜在影响
 

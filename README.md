@@ -19,7 +19,7 @@
 
 从 [Releases](https://github.com/haxsd/github-radar/releases/latest) 下载唯一安装包：
 
-- `GitHubRadar-Setup-0.6.2.exe`：双击安装，不需要管理员权限；带开始菜单 / 桌面快捷方式、系统托盘，可在「设置 → 应用」卸载。
+- `GitHubRadar-Setup-0.7.0.exe`：双击安装，不需要管理员权限；带开始菜单 / 桌面快捷方式、系统托盘，可在「设置 → 应用」卸载。
 - 数据默认保存在 `%LOCALAPPDATA%\GitHubRadar\`（数据库、预览图缓存、日志、`.env`）。
 - 从旧版绿色目录迁移：运行 `StarScout.exe --import-data "旧目录路径"`，或把旧目录的 `data\` 与 `.env` 复制到上面的数据目录。
 
@@ -58,6 +58,7 @@ Windows 下 `collect_bg.bat`（无窗口采集）与 `start_web.bat` 可直接�
 ## 文档
 
 - [docs/design.md](docs/design.md)：网页 UI 设计规范与组件约定
+- [CHANGELOG.md](CHANGELOG.md)：版本更新记录
 - [CONTRIBUTING.md](CONTRIBUTING.md)：贡献约定
 - [packaging/使用说明.txt](packaging/使用说明.txt)：桌面版安装与使用说明
 - [Releases](https://github.com/haxsd/github-radar/releases)：版本与下载

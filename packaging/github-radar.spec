@@ -17,6 +17,7 @@ a = Analysis(
         (str(ROOT / "LICENSE"), "."),
         (str(ROOT / "README.md"), "."),
         (str(ROOT / "README-EN.md"), "."),
+        (str(ROOT / "CHANGELOG.md"), "."),
         (str(ROOT / ".env.example"), "."),
         (str(ROOT / "packaging" / "使用说明.txt"), "."),
     ],

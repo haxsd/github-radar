@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import gzip
 import hmac
 import ipaddress
 import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 from urllib.parse import urljoin
 
 import requests
@@ -16,10 +18,10 @@ from flask import Flask, jsonify, redirect, render_template, request, send_file
 from . import collect, config, db, feed, llm, netguard, network
 
 app = Flask(__name__, template_folder="templates")
+app.json.ensure_ascii = False  # 中文直接以 UTF-8 输出，少约一半转义字符
+app.json.sort_keys = False
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024  # 本地接口不需要传大文件
 logger = logging.getLogger(__name__)
-
-
-import gzip
 
 
 def _is_loopback(addr: str | None) -> bool:
@@ -47,6 +49,12 @@ def _provided_admin_token(data: dict | None = None) -> str:
     if isinstance(data, dict):
         return str(data.get("admin_token") or "").strip()
     return ""
+
+
+def _json_body() -> dict:
+    """请求体必须是 JSON 对象；数组/字符串/空 body 一律当空对象，避免 .get 崩掉。"""
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
 
 
 def _can_write_settings(remote_addr: str | None, provided_token: str | None = None) -> bool:
@@ -111,6 +119,17 @@ def _compress(response):
     return response
 
 
+@app.after_request
+def _security_headers(response):
+    """本地服务也加上基础安全头；API 禁止缓存，避免设置/信息流读到旧响应。"""
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    if request.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def _needs_setup() -> bool:
     github_ok = config.github_token_status() != "missing"
     llm_ok = bool(config.LLM_API_KEY) or config.LLM_PROVIDER == "ollama"
@@ -139,13 +158,8 @@ def _window_note(data: dict) -> str:
 
 @app.get("/")
 def index():
-    return render_template(
-        "feed.html",
-        **_ctx("feed"),
-        categories=feed.category_counts(),
-        groups=feed.tag_groups(),
-        profile=feed.profile_summary(),
-    )
+    # 信息流的分类/标签/画像由 /api/feed 异步加载，首页模板不需要预查这些数据
+    return render_template("feed.html", **_ctx("feed"))
 
 
 @app.get("/rank")
@@ -206,7 +220,7 @@ def settings_page():
 
 @app.post("/api/settings")
 def api_settings_save():
-    data = request.get_json(silent=True) or {}
+    data = _json_body()
     if not _can_write_settings(request.remote_addr, _provided_admin_token(data)):
         logger.warning("拒绝设置写入请求，remote=%s", request.remote_addr)
         return _settings_denied_response()
@@ -262,14 +276,15 @@ def api_settings_save():
 
 @app.post("/api/settings/test")
 def api_settings_test():
-    data = request.get_json(silent=True) or {}
+    data = _json_body()
     if not _can_write_settings(request.remote_addr, _provided_admin_token(data)):
         logger.warning("拒绝远程设置测试请求，remote=%s", request.remote_addr)
         return _settings_denied_response()
     target = data.get("target")
     if target == "github":
         try:
-            token = config.resolve_github_token()
+            # 支持用表单里还没保存的 token 测试
+            token = str(data.get("github_token") or "").strip() or config.resolve_github_token()
             resp = requests.get(
                 "https://api.github.com/user",
                 headers={
@@ -289,12 +304,25 @@ def api_settings_test():
     if target == "llm":
         started = time.time()
         try:
+            overrides: dict[str, object] = {}
+            for key in ("provider", "base_url", "model", "api_key"):
+                value = data.get(key)
+                if isinstance(value, str) and value.strip():
+                    overrides[key] = value.strip()
+            if overrides.get("provider") not in (None, *config.PROVIDERS):
+                overrides.pop("provider", None)  # 未知 provider 回退到当前配置
+            for key in ("json_mode", "disable_thinking"):
+                if key in data:
+                    overrides[key] = bool(data[key])
+            test_cfg = config.llm_config(overrides)
             llm._chat_json(
-                [{"role": "user", "content": '只输出 JSON：{"ok": true}'}], max_tokens=50
+                [{"role": "user", "content": '只输出 JSON：{"ok": true}'}],
+                max_tokens=50,
+                cfg_override=test_cfg,
             )
             ms = int((time.time() - started) * 1000)
             return jsonify(
-                {"ok": True, "message": f"模型可用：{config.LLM_MODEL}（{ms} ms）"}
+                {"ok": True, "message": f"模型可用：{test_cfg['model']}（{ms} ms）"}
             )
         except Exception as exc:
             return jsonify({"ok": False, "error": f"模型调用失败：{exc}"})
@@ -319,6 +347,18 @@ def _thumb_path(repo_id: int, width: int):
     return THUMB_DIR / f"{repo_id}_{width}.jpg"
 
 
+def _normalize_thumb_width(raw: str | int | None, default: int = 240) -> int:
+    """把请求宽度收敛到前端实际使用的 240/480/960 三档。
+
+    否则任意 ?w= 都会各生成一份缓存，既可以刷爆磁盘，也会让命中率变差。
+    """
+    try:
+        width = int(raw) if raw is not None else int(default)
+    except (TypeError, ValueError):
+        width = int(default)
+    return min(THUMB_STANDARD_WIDTHS, key=lambda w: abs(w - width))
+
+
 def _placeholder_thumb(width: int):
     """本地生成的占位预览图（深色渐变 + 雷达圆环），真实图失败时兜底。"""
     cache = THUMB_DIR / f"_placeholder_{width}.jpg"
@@ -341,7 +381,7 @@ def _placeholder_thumb(width: int):
                     fill=(20 + int(18 * ratio), 26 + int(22 * ratio), 38 + int(30 * ratio)),
                 )
             cx, cy = width // 2, height // 2
-            for radius, alpha in ((min(width, height) * 0.36, 70), (min(width, height) * 0.24, 90)):
+            for radius in (min(width, height) * 0.36, min(width, height) * 0.24):
                 draw.ellipse(
                     (cx - radius, cy - radius, cx + radius, cy + radius),
                     outline=(90, 130, 220),
@@ -773,10 +813,7 @@ def thumb(repo_id: int):
     关键点：这里绝不等待远端图片下载（GitHub 图片 CDN 慢/超时会让整页卡住），
     只把任务排进后台线程池，HTTP 请求立刻返回占位图。
     """
-    try:
-        width = max(160, min(int(request.args.get("w", 480)), 1200))
-    except ValueError:
-        width = 480
+    width = _normalize_thumb_width(request.args.get("w"), 480)
     cache = _thumb_path(repo_id, width)
     if cache.exists():
         return send_file(str(cache), mimetype="image/jpeg", max_age=86400)
@@ -803,10 +840,7 @@ def api_thumbs_status():
 
     前端会用这个接口轮询，把占位图替换成真实预览图，用来实现「页面秒开、图片渐进加载」。
     """
-    try:
-        width = max(160, min(int(request.args.get("w", 240)), 1200))
-    except ValueError:
-        width = 240
+    width = _normalize_thumb_width(request.args.get("w"), 240)
     ids: list[int] = []
     for part in (request.args.get("ids") or "").split(","):
         part = part.strip()
@@ -845,7 +879,7 @@ def api_thumbs_cache():
 @app.post("/api/thumbs/prefetch")
 def api_thumbs_prefetch():
     """把未读/最新卡片的预览图预下载到 data/thumbs，之后浏览直接读本地。"""
-    data = request.get_json(silent=True) or {}
+    data = _json_body()
     if not _can_write_settings(request.remote_addr, _provided_admin_token(data)):
         logger.warning("拒绝远程缩略图预下载请求，remote=%s", request.remote_addr)
         return _settings_denied_response()
@@ -857,23 +891,41 @@ def api_thumbs_prefetch():
     with _PREFETCH_LOCK:
         if _PREFETCH_STATE["running"]:
             return jsonify({"ok": False, "error": "预下载正在进行中，请稍候"}), 409
-    items = _thumb_prefetch_candidates(limit)
-    if not items:
-        return jsonify({"ok": True, "total": 0, "message": "未读卡片都已有本地预览图"})
-    with _PREFETCH_LOCK:
+        # 先占位再查候选，避免两个并发请求同时通过检查、各起一个下载线程
         _PREFETCH_STATE.update(
             {
                 "running": True,
                 "done": 0,
                 "saved": 0,
                 "failed": 0,
-                "total": len(items),
+                "total": 0,
                 "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "finished_at": "",
                 "error": "",
             }
         )
-    threading.Thread(target=_run_thumb_prefetch, args=(items,), daemon=True).start()
+    try:
+        items = _thumb_prefetch_candidates(limit)
+    except Exception as exc:
+        with _PREFETCH_LOCK:
+            _PREFETCH_STATE["running"] = False
+            _PREFETCH_STATE["error"] = str(exc)
+            _PREFETCH_STATE["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        return jsonify({"ok": False, "error": "扫描预览图缓存失败：%s" % exc}), 500
+    if not items:
+        with _PREFETCH_LOCK:
+            _PREFETCH_STATE["running"] = False
+            _PREFETCH_STATE["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        return jsonify({"ok": True, "total": 0, "message": "未读卡片都已有本地预览图"})
+    with _PREFETCH_LOCK:
+        _PREFETCH_STATE["total"] = len(items)
+    try:
+        threading.Thread(target=_run_thumb_prefetch, args=(items,), daemon=True).start()
+    except Exception as exc:
+        with _PREFETCH_LOCK:
+            _PREFETCH_STATE["running"] = False
+            _PREFETCH_STATE["error"] = str(exc)
+        return jsonify({"ok": False, "error": "启动预下载失败：%s" % exc}), 500
     logger.info("开始预下载预览图：%s 张", len(items))
     return jsonify(
         {"ok": True, "total": len(items), "message": f"开始在后台预下载 {len(items)} 张预览图"}
@@ -937,7 +989,7 @@ def api_profile():
 
 @app.post("/api/action")
 def api_action():
-    data = request.get_json(silent=True) or {}
+    data = _json_body()
     try:
         repo_id = int(data.get("repo_id") or 0)
     except (TypeError, ValueError):
@@ -946,6 +998,9 @@ def api_action():
     conn = db.connect()
     db.init_db(conn)
     try:
+        if not conn.execute("SELECT 1 FROM repos WHERE id=?", (repo_id,)).fetchone():
+            conn.close()
+            return jsonify({"ok": False, "error": "repo not found"}), 404
         if action in ("skip", "like", "shown"):
             db.mark_seen(conn, repo_id, action)
         elif action == "unsee":
@@ -974,10 +1029,15 @@ def api_action():
 def api_demo_load():
     from . import demo
 
+    data = _json_body()
+    if not _can_write_settings(request.remote_addr, _provided_admin_token(data)):
+        logger.warning("拒绝远程载入示例数据请求，remote=%s", request.remote_addr)
+        return _settings_denied_response()
     try:
         result = demo.load_demo()
     except Exception as exc:
         return jsonify({"ok": False, "error": f"载入示例数据失败：{exc}"}), 500
+    feed.invalidate_cache()
     return jsonify({"ok": True, **result})
 
 
@@ -1042,9 +1102,10 @@ def _startup_catchup() -> None:
 def _port_in_use(host: str, port: int) -> bool:
     import socket
 
+    probe_host = "127.0.0.1" if host in ("", "0.0.0.0", "::") else host
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.6)
-        return s.connect_ex((host, port)) == 0
+        return s.connect_ex((probe_host, port)) == 0
 
 
 def main() -> None:
@@ -1067,7 +1128,14 @@ def main() -> None:
     threading.Thread(target=_startup_catchup, daemon=True).start()
     _start_thumb_warmer()
     print(f"雷达页面：http://{config.WEB_HOST}:{config.WEB_PORT}")
-    app.run(host=config.WEB_HOST, port=config.WEB_PORT, debug=False, threaded=True)
+    try:
+        from waitress import serve
+    except ImportError:
+        # 没装 waitress（例如旧虚拟环境）时退回 Flask 自带服务器
+        app.run(host=config.WEB_HOST, port=config.WEB_PORT, debug=False, threaded=True)
+    else:
+        # Docker / 局域网部署用生产级 WSGI 服务器；本地单用户 8 个线程足够
+        serve(app, host=config.WEB_HOST, port=config.WEB_PORT, threads=8)
 
 
 if __name__ == "__main__":

@@ -1,27 +1,26 @@
 """后台批量补翻译：每批一个小进程，超时就跳过，避免长连接卡死。
 
-由 translate_loop.bat 在隐藏窗口里调用。
+由 translate_loop.bat 在隐藏窗口里调用；日志直接打印到 stdout，
+由批处理重定向到 data/logs/translate_loop.log，避免和 collect.log 抢同一个文件句柄。
 """
 
 from __future__ import annotations
 
 import subprocess
-import sys
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 PY = ROOT / ".venv" / "Scripts" / "python.exe"
-LOG = ROOT / "data" / "logs" / "collect.log"
 
 BATCH = 120
 MAX_BATCHES = 120
+MAX_EMPTY_BATCHES = 2
 
 
 def log(msg: str) -> None:
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("a", encoding="utf-8") as f:
-        f.write(msg.rstrip() + "\n")
+    # 只写 stdout：调用方负责重定向；不自己打开日志文件，避免 Windows 文件锁冲突
+    print(msg, flush=True)
 
 
 def main() -> None:
@@ -32,6 +31,7 @@ def main() -> None:
         return
 
     total = 0
+    empty_streak = 0
     for i in range(MAX_BATCHES):
         try:
             proc = subprocess.run(
@@ -40,11 +40,18 @@ def main() -> None:
                 capture_output=True,
                 text=True,
                 timeout=300,
+                check=False,
             )
         except subprocess.TimeoutExpired:
+            empty_streak += 1
             log(f"[loop] 第 {i + 1} 批超时，跳过")
+            if empty_streak >= MAX_EMPTY_BATCHES:
+                break
             time.sleep(3)
             continue
+        except OSError as exc:
+            log("[loop] 无法启动翻译进程：%s" % exc)
+            break
         out = (proc.stdout or "") + (proc.stderr or "")
         done = 0
         for line in out.splitlines():
@@ -56,16 +63,21 @@ def main() -> None:
         total += done
         log(f"[loop] 第 {i + 1} 批完成 {done} 条（累计 {total}）")
         if done == 0:
-            time.sleep(2)
-            # 连续两批都没新东西才认为补完了
-            if i > 0 and total == 0:
+            # 连续几批都没有新内容才结束；不能只看累计 total，
+            # 否则翻译过一批之后就永远停不下来，会空跑满 MAX_BATCHES 次。
+            empty_streak += 1
+            if empty_streak >= MAX_EMPTY_BATCHES:
                 break
+            time.sleep(2)
             continue
+        empty_streak = 0
         time.sleep(1)
 
     conn = db.connect()
-    left = len(db.untranslated(conn, 999999))
-    conn.close()
+    try:
+        left = len(db.untranslated(conn, 999999))
+    finally:
+        conn.close()
     log(f"[loop] 翻译循环结束：本次 {total} 条，剩余未翻译 {left}")
 
 

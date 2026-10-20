@@ -14,5 +14,5 @@ echo [2/3] installing requirements...
 echo [3/3] initializing database...
 ".venv\Scripts\python.exe" -c "from radar import db; db.init_db(); print(\"DB OK\")"
 echo.
-echo Done. Next: run collect.bat to fetch data, then open the web page.
+echo Done. Next: run 采集.bat (or "python -m radar.collect seed") to fetch data, then open the web page.
 pause

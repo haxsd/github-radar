@@ -21,6 +21,22 @@ from . import config, db, github, llm, netguard
 logger = logging.getLogger(__name__)
 
 
+def _local_iso(value: str | None) -> str:
+    """把 GitHub 的 UTC 时间（Z / +00:00）转成本地时区 ISO。
+
+    事件时间统一用本地时区，按字符串排序/比较才能和 now_iso() 保持一致。
+    """
+    if not value:
+        return db.now_iso()
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return db.now_iso()
+    if dt.tzinfo is not None:
+        dt = dt.astimezone()
+    return dt.isoformat(timespec="seconds")
+
+
 def _record_failure(scope: str, exc: BaseException, conn=None) -> None:
     """把最近一次采集失败摘要写进 meta，供网页展示。
 
@@ -161,23 +177,41 @@ def _seed_days(
 
 
 def cmd_seed(days: int, per_day: int | None = None) -> None:
-    gh = github.GitHub()
-    conn = db.connect()
-    db.init_db(conn)
+    # 种子采集可能跑很久，和 wave 用同一把锁，避免两边同时写库
+    if not _acquire_lock():
+        print("[seed] 已有采集任务在跑，跳过")
+        return
+    gh: github.GitHub | None = None
+    conn = None
     try:
+        gh = github.GitHub()
+        conn = db.connect()
+        db.init_db(conn)
+        db.meta_set(conn, "collecting", "1")
+        conn.commit()
         total, last_error = _seed_days(conn, gh, days, per_day)
         db.meta_set(conn, "last_seed_at", db.now_iso())
+        db.meta_set(conn, "collecting", "0")
         conn.commit()
         if last_error is not None:
             # 放在 last_seed_at 之后记录，保证失败在网页上仍然显示为"未恢复"
             _record_failure("seed-search", last_error, conn)
     except Exception as exc:
         logger.warning("[seed] 失败: %s", exc)
+        if conn is not None:
+            try:
+                conn.rollback()
+                db.meta_set(conn, "collecting", "0")
+                conn.commit()
+            except Exception as cleanup_exc:
+                logger.warning("[seed] 清理 collecting 标记失败: %s", cleanup_exc)
         _record_failure("seed", exc, conn)
         raise
     finally:
-        conn.close()
-    filled = _fill_og_images(gh, 500)
+        if conn is not None:
+            conn.close()
+        _release_lock()
+    filled = _fill_og_images(gh, 500) if gh is not None else 0
     suffix = f"，回填预览图 {filled} 个" if filled else ""
     print(f"[seed] 完成，共收录 {total} 个仓库{suffix}")
 
@@ -243,6 +277,7 @@ def cmd_backfill(days: int = 30, translate_total: int = 3000, batch: int = 200) 
 def cmd_update(gh: github.GitHub | None = None, limit: int = 2000) -> int:
     gh = gh or github.GitHub()
     conn = db.connect()
+    db.init_db(conn)
     try:
         rows = conn.execute(
             "SELECT * FROM repos WHERE node_id IS NOT NULL ORDER BY last_seen_at ASC LIMIT ?",
@@ -307,7 +342,7 @@ def cmd_update(gh: github.GitHub | None = None, limit: int = 2000) -> int:
                         conn,
                         row["id"],
                         "release",
-                        rel.get("publishedAt") or db.now_iso(),
+                        _local_iso(rel.get("publishedAt")),
                         {"tag": tag},
                     ):
                         events += 1
@@ -594,6 +629,10 @@ def cmd_wave(
 def catchup_if_stale(max_age_hours: float = 8.0) -> bool:
     """启动时检查数据新鲜度；过期就补跑一次（补偿关机期间漏掉的定时任务）。"""
     try:
+        # 新装/未配置时不要自动跑：否则首页会立刻出现一条"采集失败"红条
+        if config.github_token_status() == "missing":
+            print("[startup] 尚未配置 GitHub Token，跳过自动补跑")
+            return False
         conn = db.connect()
         db.init_db(conn)
         last = db.meta_get(conn, "last_wave_at") or db.meta_get(conn, "last_seed_at")

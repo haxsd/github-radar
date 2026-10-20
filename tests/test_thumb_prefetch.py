@@ -76,7 +76,7 @@ class _Base(unittest.TestCase):
 class TestCacheStats(_Base):
     def test_cache_stats_excludes_placeholder(self):
         a = self._insert()
-        b = self._insert()
+        self._insert()
         self._insert(og=None)  # 没有 og_image，不应计入
         self._cache_file(a)
         (web.THUMB_DIR / "_placeholder_240.jpg").write_bytes(b"p")

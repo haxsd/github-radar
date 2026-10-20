@@ -90,10 +90,23 @@ class TestMacrosAreWired(unittest.TestCase):
         self.assertIn("/api/thumbs/status", js)
         self.assertIn("/api/network/status", js)
 
+    def test_feed_actions_use_repo_id_not_stale_index(self):
+        """删行后 data-idx 会重排，行内按钮必须按 repo_id 找当前索引。"""
+        js = (STATIC / "js" / "feed.js").read_text(encoding="utf-8")
+        self.assertIn("function actRepo(repoId, action)", js)
+        self.assertIn("actRepo($" + "{c.repo_id},'save')", js)
+        self.assertIn("actRepo($" + "{c.repo_id},'skip')", js)
+
     def test_settings_page_has_network_card(self):
         html = (TEMPLATES / "settings.html").read_text(encoding="utf-8")
         for marker in ('id="network"', 'id="net-github-pill"', 'id="radarProxy"'):
             self.assertIn(marker, html, f"设置页缺少网络状态标记: {marker}")
+
+    def test_settings_test_button_uses_current_form_values(self):
+        js = (STATIC / "js" / "settings.js").read_text(encoding="utf-8")
+        self.assertIn("body.github_token", js)
+        self.assertIn("body.api_key", js)
+        self.assertIn("cfg_override", Path(web.__file__).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

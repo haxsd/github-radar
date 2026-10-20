@@ -111,7 +111,7 @@
       </div>
 
       <div class="panel-foot">
-        <button type="button" class="btn" onclick="testTarget('github')" {{ 'disabled' if not settings_writable else '' }}>测试连接</button>
+        <button type="button" class="btn" onclick="testTarget('github')" title="使用当前填写的 Token 测试，不会保存" {{ 'disabled' if not settings_writable else '' }}>测试连接</button>
         <div class="result" id="ghResult"></div>
       </div>
     </section>
@@ -208,7 +208,7 @@
       </div>
 
       <div class="panel-foot">
-        <button type="button" class="btn" onclick="testTarget('llm')" {{ 'disabled' if not settings_writable else '' }}>测试模型</button>
+        <button type="button" class="btn" onclick="testTarget('llm')" title="使用当前填写的模型配置测试，不会保存" {{ 'disabled' if not settings_writable else '' }}>测试模型</button>
         <div class="result" id="llmResult"></div>
       </div>
     </section>
@@ -318,7 +318,7 @@
       <span class="dock-hint" id="saveHint" aria-live="polite">修改后点击保存，立即生效</span>
     </div>
     <div class="dock-actions">
-      <button type="button" class="btn" onclick="testTarget('llm')" {{ 'disabled' if not settings_writable else '' }}>测试模型</button>
+      <button type="button" class="btn" onclick="testTarget('llm')" title="使用当前填写的模型配置测试，不会保存" {{ 'disabled' if not settings_writable else '' }}>测试模型</button>
       <button type="button" class="btn primary" id="saveBtn" onclick="saveSettings()" {{ 'disabled' if not settings_writable else '' }}>保存配置</button>
     </div>
   </div>
