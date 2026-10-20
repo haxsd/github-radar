@@ -32,6 +32,7 @@
 - **数据清洗**：自动隐藏 SEO 推广页、破解资源、批量刷星农场
 - **采集状态可见**：首页顶部红条提示采集失败 + 设置页展示最近一次采集失败原因
 - **网络状态可见**：首页顶栏显示网络正常/受限/异常，设置页检测 GitHub API、图片 CDN、模型接口连通性，并支持配置代理
+- **预览图本地缓存**：下载一次存本地（240/480/960），支持一键预下载未读卡片，浏览时不再重复请求 CDN
 - **全本地**：SQLite 存数据，不收集任何遥测
 
 ![详情页](docs/screenshots/detail.png)
@@ -146,6 +147,7 @@ python -m radar.collect wave          # 日常：增量收录 + 更新事件 + �
 python -m radar.collect update        # 只刷新已有仓库的 star / 提交状态
 python -m radar.collect translate     # 补翻译（可加 --limit 500）
 python -m radar.collect tag           # 补标签
+python -m radar.collect thumbs        # 预下载预览图到本地缓存（可加 --limit 300）
 python -m radar.collect rewrite       # 重写老卡片
 python -m radar.collect clean         # 预览可疑仓库（--apply 才真正隐藏，--unhide 恢复）
 python -m radar.web                   # 启动网页
@@ -204,6 +206,7 @@ build_app.bat    打包 exe 脚本
 - **提示 GitHub 403 / 限流**：没配 token 时只有 60 次/小时，配置后 5000 次/小时。
 - **模型报错 401 / 404**：检查 Base URL 是否需要 `/v1`，模型名是否拼对；可以先点设置页「测试模型」。
 - **网页能打开但没有内容**：还没跑采集，或数据还在翻译中；看 `data/logs/` 下的日志。
+- **预览图是本地缓存**：每个仓库第一次显示时会下载一次预览图，压缩成 240 / 480 / 960 三种尺寸存到 `data/thumbs/`，之后打开页面都直接读本地文件，不会重复联网。新收录卡片还没缓存时，可以用设置页「⑤ 预览图缓存 → 预下载未读卡片」，或运行 `python -m radar.collect thumbs --limit 300`；`collect_bg.bat` 也会在采集后自动补 150 张。缓存目录可以随时删除（会按需重新生成），不删会越用越快。
 - **预览图加载慢 / 一直是雷达占位图**：页面不会等图片下载——先显示占位图，真实预览图在后台生成后会自动替换（GitHub 图片 CDN 慢或超时也不会卡住页面）。如果长时间仍是占位图，多半是本机直连 GitHub 图片域名超时，检查网络/代理即可，不影响信息流使用。
 - **国内网络 / 需要代理**：GitHub API 通常可直连（可能较慢），但 GitHub 图片 CDN（`opengraph.githubassets.com`）在国内经常超时；DeepSeek、本地 Ollama 一般可直连。需要代理时在 `.env` 或设置页配置 `RADAR_PROXY=http://127.0.0.1:7897`（用于 GitHub API + 图片）；如果模型接口也需要代理，额外设置 `LLM_PROXY`。
 - **怎么知道网络是否可用**：首页顶栏会显示「网络正常 / 网络受限 / 网络异常」，失败时顶部有提示条；设置页「④ 网络状态」可查看 GitHub API、图片 CDN、模型接口各自的连通性与延迟，并点「重新检测」。

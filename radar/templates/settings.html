@@ -172,6 +172,21 @@
         <button type="button" class="btn primary sm" onclick="saveSettings()" {{ 'disabled' if not settings_writable else '' }}>保存代理配置</button>
       </div>
     </section>
+
+    <section class="scard thumbcard" id="thumbs">
+      <h2><span class="num">5</span>预览图缓存</h2>
+      <p class="sub">预览图第一次加载后会压缩保存到本地 <code>data/thumbs</code>（240 / 480 / 960 三种尺寸），之后直接读本地，不会重复下载。图片 CDN 有频率限制，一次预下载 30 张比较稳；配置 <code>RADAR_PROXY</code> 后可以多下一些。</p>
+      <div class="statusgrid">
+        <span class="item">本地已缓存 <b class="mono" id="thumbCached">—</b> 个仓库</span>
+        <span class="item">有预览图来源 <b class="mono" id="thumbTotal">—</b> 个</span>
+        <span class="item" id="thumbState">读取中…</span>
+      </div>
+      <div class="sactions">
+        <button type="button" class="btn sm" onclick="loadThumbCache()">刷新状态</button>
+        <button type="button" class="btn primary sm" id="thumbPrefetchBtn" onclick="prefetchThumbs()" {{ 'disabled' if not settings_writable else '' }}>预下载未读卡片</button>
+      </div>
+      <div class="savehint" id="thumbHint"></div>
+    </section>
   </div>
 
   <div class="foot">

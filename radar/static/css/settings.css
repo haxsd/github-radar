@@ -51,6 +51,8 @@
 .statuscard .result{margin-top:8px;min-height:auto;background:rgba(0,0,0,.2);
   border:1px solid var(--stroke);border-radius:var(--r-sm);padding:9px 12px}
 .netcard{grid-column:1 / -1}
+.thumbcard{grid-column:1 / -1}
+.thumbcard .statusgrid{margin-bottom:10px}
 .netrows{display:flex;flex-direction:column;gap:8px;margin:4px 0 14px}
 .netrow{display:grid;grid-template-columns:110px auto minmax(0,1fr);gap:12px;align-items:center;
   padding:10px 12px;border:1px solid var(--stroke);border-radius:var(--r-sm);background:rgba(0,0,0,.18)}
@@ -61,6 +63,7 @@
   .sgrid{grid-template-columns:1fr}
   .statuscard{grid-column:auto}
   .netcard{grid-column:auto}
+  .thumbcard{grid-column:auto}
 }
 @media (max-width:700px){
   .netrow{grid-template-columns:1fr auto;gap:8px}

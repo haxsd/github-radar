@@ -4,7 +4,9 @@ cd /d "%~dp0"
 if not exist "data\logs" mkdir "data\logs"
 if exist ".venv\Scripts\pythonw.exe" (
   ".venv\Scripts\pythonw.exe" -m radar.collect wave >> "data\logs\collect.log" 2>&1
+  ".venv\Scripts\pythonw.exe" -m radar.collect thumbs --limit 150 >> "data\logs\collect.log" 2>&1
 ) else (
   ".venv\Scripts\python.exe" -m radar.collect wave >> "data\logs\collect.log" 2>&1
+  ".venv\Scripts\python.exe" -m radar.collect thumbs --limit 150 >> "data\logs\collect.log" 2>&1
 )
 exit /b 0

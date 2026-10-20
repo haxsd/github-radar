@@ -174,6 +174,64 @@ async function refreshNetwork(force) {
 }
 refreshNetwork(false);
 
+// ---------- 预览图缓存 ----------
+async function loadThumbCache() {
+  try {
+    const r = await fetch("/api/thumbs/cache");
+    const d = await r.json();
+    const cache = d.cache || {};
+    if ($("thumbCached")) $("thumbCached").textContent = cache.cached ?? "—";
+    if ($("thumbTotal")) $("thumbTotal").textContent = cache.repos_with_image ?? "—";
+    const p = d.prefetch || {};
+    const state = $("thumbState");
+    const btn = $("thumbPrefetchBtn");
+    const hint = $("thumbHint");
+    if (state) {
+      if (p.running) state.textContent = `预下载中 ${p.done}/${p.total}…（已保存 ${p.saved || 0}）`;
+      else if (p.finished_at) {
+        state.textContent = `上次预下载完成：${p.done}/${p.total}（成功 ${p.saved || 0}`
+          + (p.failed ? `，失败 ${p.failed}` : "") + "）";
+      } else state.textContent = "当前没有预下载任务";
+    }
+    if (btn) {
+      const writable = $("settingsRoot") && $("settingsRoot").dataset.writable === "1";
+      btn.disabled = p.running || !writable;
+      btn.textContent = p.running ? "预下载中…" : "预下载未读卡片";
+    }
+    if (hint) {
+      if (p.running) hint.textContent = "预下载在后台进行，关闭页面也会继续；完成后缩略图会直接读本地。";
+      else if (p.error) hint.textContent = p.error;
+      else if (p.finished_at) hint.textContent = "预下载已结束，刷新页面即可看到本地缓存效果。";
+    }
+    if (p.running) setTimeout(loadThumbCache, 1500);
+  } catch (e) {
+    if ($("thumbState")) $("thumbState").textContent = "缓存状态读取失败";
+  }
+}
+
+async function prefetchThumbs() {
+  const hint = $("thumbHint");
+  if (!writableGuard(hint)) return;
+  hint.textContent = "正在启动…";
+  try {
+    const r = await fetch("/api/thumbs/prefetch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limit: 30, ...adminPayload() }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || "启动失败");
+    hint.textContent = d.message || "";
+    window.toast(d.message || "已开始预下载");
+    rememberAdminToken();
+    loadThumbCache();
+  } catch (e) {
+    hint.textContent = e.message;
+  }
+}
+
+loadThumbCache();
+
 (function initAdminToken(){
   const el = $("adminToken");
   if(el) el.value = loadAdminToken();

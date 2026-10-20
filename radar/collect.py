@@ -622,6 +622,38 @@ def catchup_if_stale(max_age_hours: float = 8.0) -> bool:
 
 # ---------------- CLI ----------------
 
+def cmd_thumbs(limit: int = 300) -> None:
+    """预下载未读 / 最新卡片的预览图，存在 data/thumbs，之后浏览直接读本地。"""
+    from . import web  # 延迟导入：collect 在 web 中被导入，避免循环依赖
+
+    items = web._thumb_prefetch_candidates(limit)
+    if not items:
+        print("[thumbs] 没有需要下载的预览图")
+        return
+    print(f"[thumbs] 开始预下载 {len(items)} 张（已缓存的会自动跳过）…")
+    with web._PREFETCH_LOCK:
+        web._PREFETCH_STATE.update(
+            {
+                "running": True,
+                "done": 0,
+                "saved": 0,
+                "failed": 0,
+                "total": len(items),
+                "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "finished_at": "",
+                "error": "",
+            }
+        )
+    web._run_thumb_prefetch(items)
+    snapshot = web._prefetch_snapshot()
+    print(
+        f"[thumbs] 完成：成功 {snapshot['saved']} / {snapshot['total']}"
+        + (f"，失败 {snapshot['failed']}" if snapshot["failed"] else "")
+    )
+    if snapshot.get("error"):
+        print(f"[thumbs] {snapshot['error']}")
+
+
 def main() -> None:
     config.setup_logging()
     parser = argparse.ArgumentParser(description="GitHub 中文雷达 · 采集器")
@@ -658,6 +690,9 @@ def main() -> None:
     p_bf.add_argument("--translate-total", type=int, default=3000)
     p_bf.add_argument("--batch", type=int, default=200)
 
+    p_th = sub.add_parser("thumbs", help="预下载预览图到本地缓存（提高浏览速度）")
+    p_th.add_argument("--limit", type=int, default=300)
+
     args = parser.parse_args()
     if args.cmd == "seed":
         cmd_seed(args.days, args.per_day)
@@ -681,6 +716,8 @@ def main() -> None:
         cmd_clean(args.apply, args.unhide)
     elif args.cmd == "backfill":
         cmd_backfill(args.days, args.translate_total, args.batch)
+    elif args.cmd == "thumbs":
+        cmd_thumbs(args.limit)
     elif args.cmd == "wave":
         cmd_wave(args.translate_limit, args.update_limit, args.days, args.tag_limit)
     else:

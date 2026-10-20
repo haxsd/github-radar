@@ -407,23 +407,26 @@ def _fetch_image_bytes(url: str, timeout: float = 12.0, max_bytes: int = MAX_IMA
         sess.close()
 
 
-def _generate_thumb(repo_id: int, width: int, og: str, owner: str) -> None:
-    """下载 GIF/PNG 预览图并压缩缓存（只应在后台线程里调用）。"""
+def _generate_thumb(repo_id: int, width: int, og: str, owner: str) -> bool:
+    """下载 GIF/PNG 预览图并压缩缓存（只应在后台线程里调用）。
+
+    返回 True 表示请求的宽度已经落盘；False 表示被 429 限流/下载失败（稍后重试）。
+    """
     key = (repo_id, width)
     with _THUMB_LOCK:
         if key in _THUMB_PENDING:
-            return
+            return _thumb_path(repo_id, width).exists()
         _THUMB_PENDING.add(key)
     try:
         cache = _thumb_path(repo_id, width)
         if cache.exists():
-            return
+            return True
         import io
 
         from PIL import Image
 
         if not _thumb_wait_slot():
-            return  # 429 冷却期内不下载，等前端下次轮询/下一次打开页面再试
+            return False  # 429 冷却期内不下载，等前端下次轮询/下一次打开页面再试
         with _THUMB_DOWNLOAD_LOCK:
             data = _fetch_image_bytes(og, timeout=8.0)
         img = Image.open(io.BytesIO(data))
@@ -443,13 +446,21 @@ def _generate_thumb(repo_id: int, width: int, og: str, owner: str) -> None:
             tmp = target.with_suffix(".tmp")
             out.save(tmp, "JPEG", quality=80, optimize=True)
             tmp.replace(target)
+        return cache.exists()
     except Exception as exc:
-        status = getattr(getattr(exc, "response", None), "status_code", None)
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
         if status == 429:
-            _thumb_note_429(repo_id, width)
+            retry_after = 0
+            try:
+                retry_after = int((response.headers or {}).get("Retry-After") or 0)
+            except (TypeError, ValueError):
+                retry_after = 0
+            _thumb_note_429(repo_id, width, retry_after)
             logger.debug("预览图下载被限流 repo=%s", repo_id)
         else:
             logger.warning("预览图生成失败 repo=%s: %s", repo_id, exc)
+        return False
     finally:
         with _THUMB_LOCK:
             _THUMB_PENDING.discard(key)
@@ -466,9 +477,9 @@ _THUMB_QUEUED: set[tuple[int, int]] = set()
 # 缩略图下载全局限速 + 429 处理：GitHub 图片 CDN 对**并发连接**很敏感（实测并发 3 个
 # 左右就会开始 429，顺序 1 个则稳定），因此所有下载串行执行；429 时单图退避，
 # 只有短时间大量 429 才触发全局冷却。
-THUMB_MIN_INTERVAL = 0.3          # 两次下载请求之间至少间隔多少秒（线程共享）
+THUMB_MIN_INTERVAL = 2.0          # 两次下载请求之间至少间隔多少秒（串行 + 保守限速）
 THUMB_WARM_INTERVAL = 2.0         # 后台预热两次下载之间的最小间隔（给网页请求让路）
-THUMB_REPO_RETRY_SECONDS = 120.0  # 单个仓库 429 后的重试间隔
+THUMB_REPO_RETRY_SECONDS = 45.0   # 单个仓库 429 后的默认重试间隔
 THUMB_COOLDOWN_SECONDS = 30.0     # 连续大量 429 时的全局冷却
 THUMB_429_BURST_WINDOW = 60.0
 THUMB_429_BURST_LIMIT = 5
@@ -506,14 +517,15 @@ def _thumb_mark_on_demand() -> None:
         _THUMB_LAST_ON_DEMAND = time.time()
 
 
-def _thumb_note_429(repo_id: int, width: int) -> None:
+def _thumb_note_429(repo_id: int, width: int, retry_after: int = 0) -> None:
     """单张图 429：只让这张图退避；短时间大量 429 才全局冷却一小会儿。"""
     global _THUMB_COOLDOWN_UNTIL, _THUMB_429_TIMES
     now = time.time()
+    wait = max(20.0, min(float(retry_after or 45), 180.0))
     with _THUMB_RATE_LOCK:
         if len(_THUMB_RETRY_AFTER) > 5000:  # 防止长期运行字典无限增长
             _THUMB_RETRY_AFTER.clear()
-        _THUMB_RETRY_AFTER[(repo_id, width)] = now + THUMB_REPO_RETRY_SECONDS
+        _THUMB_RETRY_AFTER[(repo_id, width)] = now + wait
         _THUMB_429_TIMES = [
             t for t in _THUMB_429_TIMES if now - t <= THUMB_429_BURST_WINDOW
         ]
@@ -619,6 +631,136 @@ def _start_thumb_warmer() -> None:
     threading.Thread(target=_loop, daemon=True).start()
 
 
+# ---------- 手动预下载预览图（设置页按钮 / CLI 复用）----------
+_PREFETCH_LOCK = threading.Lock()
+_PREFETCH_STATE: dict[str, Any] = {
+    "running": False,
+    "done": 0,
+    "saved": 0,
+    "failed": 0,
+    "total": 0,
+    "started_at": "",
+    "finished_at": "",
+    "error": "",
+}
+
+
+def _thumb_cache_stats() -> dict[str, int]:
+    conn = db.connect()
+    db.init_db(conn)
+    total = conn.execute(
+        "SELECT COUNT(*) AS n FROM repos WHERE hidden=0 AND og_image IS NOT NULL AND og_image<>''"
+    ).fetchone()["n"]
+    conn.close()
+    try:
+        cached = sum(
+            1
+            for path in THUMB_DIR.glob("*_240.jpg")
+            if path.name.split("_", 1)[0].isdigit()
+        )
+    except OSError:
+        cached = 0
+    return {"repos_with_image": int(total), "cached": int(cached)}
+
+
+def _thumb_prefetch_candidates(limit: int = 200) -> list[dict[str, Any]]:
+    """优先未读的最新卡片，其次是最近卡片；只返回 240 预览图还没缓存的。"""
+    limit = max(1, min(int(limit), 500))
+    conn = db.connect()
+    db.init_db(conn)
+    base = """SELECT r.id, r.og_image, r.owner, MAX(e.occurred_at) AS last_at
+              FROM events e JOIN repos r ON r.id = e.repo_id
+              WHERE e.card_ready = 1 AND r.hidden = 0
+                AND r.og_image IS NOT NULL AND r.og_image <> ''
+              {where}
+              GROUP BY r.id ORDER BY last_at DESC LIMIT ?"""
+    rows = conn.execute(
+        base.format(
+            where="AND NOT EXISTS (SELECT 1 FROM seen s WHERE s.repo_id = r.id)"
+        ),
+        (limit * 5,),
+    ).fetchall()
+    items: list[dict[str, Any]] = []
+    seen_ids: set[int] = set()
+    for row in rows:
+        if len(items) >= limit:
+            break
+        if row["id"] in seen_ids or _thumb_path(row["id"], 240).exists():
+            continue
+        seen_ids.add(row["id"])
+        items.append({"id": row["id"], "og_image": row["og_image"], "owner": row["owner"] or ""})
+    if len(items) < limit:
+        for row in conn.execute(base.format(where=""), (limit * 5,)).fetchall():
+            if len(items) >= limit:
+                break
+            if row["id"] in seen_ids or _thumb_path(row["id"], 240).exists():
+                continue
+            seen_ids.add(row["id"])
+            items.append({"id": row["id"], "og_image": row["og_image"], "owner": row["owner"] or ""})
+    conn.close()
+    return items
+
+
+def _run_thumb_prefetch(items: list[dict[str, Any]]) -> None:
+    saved = 0
+    failed = 0
+    consecutive_failed = 0
+    processed = 0
+    stopped = False
+    try:
+        for index, item in enumerate(items, 1):
+            processed = index
+            ok = False
+            for attempt in range(2):
+                if _thumb_path(item["id"], 240).exists():
+                    ok = True
+                    break
+                if _thumb_cooling_down():
+                    break  # 全局冷却中，不再重试，避免继续触发 429
+                _generate_thumb(item["id"], 240, item["og_image"], item["owner"])
+                if _thumb_path(item["id"], 240).exists():
+                    ok = True
+                    break
+                if attempt == 0:
+                    time.sleep(3)
+            if ok:
+                saved += 1
+                consecutive_failed = 0
+            else:
+                failed += 1
+                consecutive_failed += 1
+            with _PREFETCH_LOCK:
+                _PREFETCH_STATE["done"] = index
+                _PREFETCH_STATE["saved"] = saved
+                _PREFETCH_STATE["failed"] = failed
+            if consecutive_failed >= 4:
+                stopped = True
+                break
+            # 用户正在页面里等图时，给按需下载让一点路
+            if _thumb_recent_on_demand(20):
+                time.sleep(1.0)
+    except Exception as exc:  # _generate_thumb 自己会吞异常，这里兜底
+        logger.warning("预览图预下载中断: %s", exc)
+        with _PREFETCH_LOCK:
+            _PREFETCH_STATE["error"] = str(exc)
+    finally:
+        with _PREFETCH_LOCK:
+            _PREFETCH_STATE["running"] = False
+            _PREFETCH_STATE["done"] = processed
+            _PREFETCH_STATE["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+            if stopped or failed:
+                _PREFETCH_STATE["error"] = (
+                    f"图片 CDN 限流，已保存 {saved}/{processed} 张；"
+                    "可稍后重试，或配置 RADAR_PROXY 后再预下载"
+                )
+
+
+def _prefetch_snapshot() -> dict[str, Any]:
+    with _PREFETCH_LOCK:
+        return dict(_PREFETCH_STATE)
+
+
+
 @app.get("/thumb/<int:repo_id>")
 def thumb(repo_id: int):
     """项目预览图：缓存命中直接返回；未命中立即给占位图，后台生成后由前端自动替换。
@@ -687,6 +829,50 @@ def api_thumbs_status():
             if row["og_image"]:
                 _schedule_thumb(row["id"], width, row["og_image"], row["owner"] or "")
     return jsonify({"ready": ready, "width": width})
+
+
+@app.get("/api/thumbs/cache")
+def api_thumbs_cache():
+    """本地预览图缓存统计 + 当前预下载进度。"""
+    return jsonify({"cache": _thumb_cache_stats(), "prefetch": _prefetch_snapshot()})
+
+
+@app.post("/api/thumbs/prefetch")
+def api_thumbs_prefetch():
+    """把未读/最新卡片的预览图预下载到 data/thumbs，之后浏览直接读本地。"""
+    data = request.get_json(silent=True) or {}
+    if not _can_write_settings(request.remote_addr, _provided_admin_token(data)):
+        logger.warning("拒绝远程缩略图预下载请求，remote=%s", request.remote_addr)
+        return _settings_denied_response()
+    try:
+        limit = int(data.get("limit") or 200)
+    except (TypeError, ValueError):
+        limit = 200
+    limit = max(1, min(limit, 500))
+    with _PREFETCH_LOCK:
+        if _PREFETCH_STATE["running"]:
+            return jsonify({"ok": False, "error": "预下载正在进行中，请稍候"}), 409
+    items = _thumb_prefetch_candidates(limit)
+    if not items:
+        return jsonify({"ok": True, "total": 0, "message": "未读卡片都已有本地预览图"})
+    with _PREFETCH_LOCK:
+        _PREFETCH_STATE.update(
+            {
+                "running": True,
+                "done": 0,
+                "saved": 0,
+                "failed": 0,
+                "total": len(items),
+                "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "finished_at": "",
+                "error": "",
+            }
+        )
+    threading.Thread(target=_run_thumb_prefetch, args=(items,), daemon=True).start()
+    logger.info("开始预下载预览图：%s 张", len(items))
+    return jsonify(
+        {"ok": True, "total": len(items), "message": f"开始在后台预下载 {len(items)} 张预览图"}
+    )
 
 @app.get("/api/similar/<int:repo_id>")
 def api_similar(repo_id: int):

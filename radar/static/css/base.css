@@ -56,8 +56,9 @@ button{font:inherit}
 /* ---------- 顶栏 ---------- */
 .topbar{
   position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:clamp(10px,2vw,24px);
-  padding:11px var(--gutter);backdrop-filter:blur(18px) saturate(140%);
-  background:rgba(7,11,18,.8);border-bottom:1px solid var(--stroke);
+  padding:11px var(--gutter);
+  /* 不用 backdrop-filter：长列表滚动时模糊层会反复重绘，低配显卡上明显掉帧 */
+  background:rgba(7,11,18,.94);border-bottom:1px solid var(--stroke);
 }
 .brand{display:flex;align-items:center;gap:11px;flex:none;min-width:0;border-radius:12px}
 .brand-mark{
