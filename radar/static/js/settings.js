@@ -21,6 +21,7 @@ function loadAdminToken(){
 }
 function writableGuard(box){
   if(SETTINGS_WRITABLE) return true;
+  if(!box) return false;
   box.className = "result err";
   box.textContent = "远程访问未启用设置写入：请在宿主机 .env 配置 WEB_ADMIN_TOKEN 后重启服务。";
   return false;
@@ -33,25 +34,56 @@ function togglePw(id, btn){
   btn.setAttribute("aria-pressed", show ? "true" : "false");
 }
 let dirty = false;
+let hideDockTimer = null;
+function setDockState(state, message) {
+  const dock = $("saveDock");
+  const hint = $("saveHint");
+  if (dock) {
+    if (hideDockTimer) { clearTimeout(hideDockTimer); hideDockTimer = null; }
+    if (state === "clean") {
+      dock.hidden = true;
+      dock.classList.remove("dirty", "ok");
+      return;
+    }
+    dock.hidden = false;
+    dock.classList.toggle("dirty", state === "dirty");
+    dock.classList.toggle("ok", state === "ok");
+  }
+  if (hint) hint.textContent = message || "";
+}
 function markDirty(){
   if(dirty || !SETTINGS_WRITABLE) return;
   dirty = true;
   const btn = $("saveBtn");
   if(btn) btn.classList.add("dirty");
-  const hint = $("saveHint");
-  if(hint) hint.textContent = "有未保存的修改";
+  setDockState("dirty", "有未保存的修改");
 }
-function clearDirty(){
+function clearDirty(message){
   dirty = false;
   const btn = $("saveBtn");
   if(btn) btn.classList.remove("dirty");
-  const hint = $("saveHint");
-  if(hint) hint.textContent = "";
+  setDockState("ok", message || "已保存 · 立即生效");
+  hideDockTimer = setTimeout(function(){
+    const dock = $("saveDock");
+    if(dock && !dock.classList.contains("dirty")) dock.hidden = true;
+  }, 1600);
 }
-document.querySelectorAll(".sgrid input, .sgrid select").forEach(el=>{
+document.querySelectorAll(".settings-body input, .settings-body select, .remotehint input").forEach(el=>{
   el.addEventListener("input", markDirty);
   el.addEventListener("change", markDirty);
 });
+
+function selectProvider(name) {
+  const select = $("provider");
+  if (!select) return;
+  select.value = name;
+  document.querySelectorAll(".provtile").forEach((tile) => {
+    const active = tile.dataset.provider === name;
+    tile.classList.toggle("active", active);
+    tile.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  applyPreset();
+}
 
 function applyPreset(){
   const p = $("provider").value;
@@ -91,11 +123,12 @@ async function saveSettings(){
     $("ghToken").value = ""; $("apiKey").value = "";
     if(proxyEl) proxyEl.value = "";
     rememberAdminToken();
-    clearDirty();
+    clearDirty("已保存 · 立即生效");
     refreshNetwork(true);
     window.toast("配置已保存");
   }catch(e){
     box.className = "result err"; box.textContent = e.message;
+    setDockState("dirty", "保存失败：" + e.message);
   }
 }
 
@@ -108,9 +141,11 @@ async function testTarget(target){
     const d = await r.json();
     if(!d.ok) throw new Error(d.error || "测试失败");
     box.className = "result ok"; box.textContent = d.message;
+    window.toast(d.message || "连接正常");
     rememberAdminToken();
   }catch(e){
     box.className = "result err"; box.textContent = e.message;
+    window.toast(e.message || "测试失败");
   }
 }
 
@@ -153,6 +188,14 @@ function renderNetwork(data) {
     const ts = (data.checked_at || "").replace("T", " ").slice(0, 19);
     checked.textContent = ts ? ("检测于 " + ts + (data.cached ? "（缓存）" : "")) : "尚未检测";
   }
+  const summary = $("netSummary");
+  if (summary) {
+    const levelText = data.level === "ok" ? "正常"
+      : data.level === "degraded" ? "部分受限"
+      : data.level === "offline" ? "不可用" : "未知";
+    summary.textContent = levelText;
+    summary.className = "advmeta" + (data.level === "ok" ? " ok" : data.level === "degraded" ? " warn" : " bad");
+  }
   const proxy = $("netProxy");
   if (proxy && data.proxy) {
     proxy.textContent = "代理：GitHub/图片 " + data.proxy.radar
@@ -182,6 +225,11 @@ async function loadThumbCache() {
     const cache = d.cache || {};
     if ($("thumbCached")) $("thumbCached").textContent = cache.cached ?? "—";
     if ($("thumbTotal")) $("thumbTotal").textContent = cache.repos_with_image ?? "—";
+    const thumbSummary = $("thumbSummary");
+    if (thumbSummary) {
+      thumbSummary.textContent = (cache.cached != null && cache.repos_with_image != null)
+        ? `${cache.cached} / ${cache.repos_with_image}` : "—";
+    }
     const p = d.prefetch || {};
     const state = $("thumbState");
     const btn = $("thumbPrefetchBtn");
@@ -231,6 +279,16 @@ async function prefetchThumbs() {
 }
 
 loadThumbCache();
+
+// 顶栏/外链的 #network、#thumbs 锚点：自动展开对应折叠区
+function openHashDetails(){
+  if(!location.hash) return;
+  let target = null;
+  try{ target = document.querySelector(location.hash); }catch(e){ return; }
+  if(target && target.tagName === "DETAILS") target.open = true;
+}
+window.addEventListener("hashchange", openHashDetails);
+openHashDetails();
 
 (function initAdminToken(){
   const el = $("adminToken");

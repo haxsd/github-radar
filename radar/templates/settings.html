@@ -7,11 +7,34 @@
 {% endblock %}
 
 {% block content %}
-<div class="wrap" id="settingsRoot" data-providers='{{ providers|tojson }}' data-writable="{{ '1' if settings_writable else '0' }}">
-  <div class="shead">
-    <h1>设置</h1>
-    <p>这个项目用你自己的 GitHub Token 和模型 API Key 运行，配置只保存在程序目录下的 <code>.env</code> 文件里，不会上传到任何服务器。</p>
-  </div>
+<div class="wrap settings-page" id="settingsRoot" data-providers='{{ providers|tojson }}' data-writable="{{ '1' if settings_writable else '0' }}">
+
+  <header class="set-hero">
+    <div class="set-hero-main">
+      <span class="eyebrow">STAR SCOUT · PREFERENCES</span>
+      <h1>设置</h1>
+      <p>连接 GitHub 与模型服务。配置只保存在这台电脑上，不会上传到任何服务器。</p>
+      <div class="hero-badges">
+        {% if github_status in ('env', 'gh-cli') %}
+        <span class="chip ok"><span class="chip-dot"></span>GitHub 已连接</span>
+        {% else %}
+        <span class="chip warn"><span class="chip-dot"></span>GitHub 待配置</span>
+        {% endif %}
+        {% if has_llm_key or current.provider == 'ollama' %}
+        <span class="chip ok"><span class="chip-dot"></span>AI 已配置</span>
+        {% else %}
+        <span class="chip warn"><span class="chip-dot"></span>AI 待配置</span>
+        {% endif %}
+        <span class="chip ghost">v{{ version }}</span>
+      </div>
+    </div>
+    <div class="hero-orb" aria-hidden="true">
+      <span class="orb-ring r1"></span>
+      <span class="orb-ring r2"></span>
+      <span class="orb-ring r3"></span>
+      {{ icon("radar", "i-xl") }}
+    </div>
+  </header>
 
   {% if settings_remote %}
   <div class="remotehint {{ '' if settings_writable else 'blocked' }}">
@@ -36,62 +59,130 @@
   </div>
   {% endif %}
 
-  <div class="sgrid">
-    <section class="scard">
-      <h2><span class="num">1</span>GitHub 访问</h2>
-      <p class="sub">需要一个 Personal Access Token（不需要任何权限勾选，public 仓库只读即可）。也可以先用 <code>gh auth login</code> 登录。</p>
-      <div class="statusline">
-        当前状态：
-        {% if github_status == 'env' %}<span class="pill ok">已配置（.env）</span>
-        {% elif github_status == 'gh-cli' %}<span class="pill ok">使用 gh CLI 登录态</span>
-        {% else %}<span class="pill warn">未配置</span>{% endif %}
+  <div class="overview">
+    <div class="ov">
+      <span class="ovlabel">项目仓库</span>
+      <b class="ovvalue">{{ stats.repos }}</b>
+    </div>
+    <div class="ov">
+      <span class="ovlabel">上次采集</span>
+      <b class="ovvalue small">{{ (stats.last_wave_at or '—')[:16] | replace('T', ' ') }}</b>
+    </div>
+    <div class="ov">
+      <span class="ovlabel">采集状态</span>
+      <b class="ovvalue {{ 'busy' if stats.collecting else '' }}">
+        {% if stats.collecting %}<span class="status-dot busy"></span>采集中{% else %}<span class="status-dot"></span>就绪{% endif %}
+      </b>
+    </div>
+    <div class="ov">
+      <span class="ovlabel">配置存储</span>
+      <b class="ovvalue small">仅本地 · .env</b>
+    </div>
+  </div>
+
+  <div class="settings-body">
+    <section class="panel" id="github">
+      <div class="panel-head">
+        <span class="picon">{{ icon("github") }}</span>
+        <div class="ptitle">
+          <h2>GitHub 连接</h2>
+          <p>抓取项目用的只读 Token，不需要勾任何权限。</p>
+        </div>
+        {% if github_status == 'env' %}
+        <span class="pill ok">已配置</span>
+        {% elif github_status == 'gh-cli' %}
+        <span class="pill ok">gh CLI</span>
+        {% else %}
+        <span class="pill warn">未配置</span>
+        {% endif %}
       </div>
-      <div class="srow">
-        <label for="ghToken">GITHUB_TOKEN</label>
+
+      <div class="field">
+        <label for="ghToken">Personal Access Token</label>
         <div class="inputwrap">
           <input id="ghToken" type="password" spellcheck="false" autocomplete="off"
-                 placeholder="ghp_… 或 github_pat_…（留空则保持不变）">
+                 placeholder="ghp_… 或 github_pat_…（留空不变）">
           <button type="button" class="reveal" aria-label="显示或隐藏 GITHUB_TOKEN" aria-pressed="false"
             onclick="togglePw('ghToken', this)">
             {{ icon("eye") }}
           </button>
         </div>
-        <span class="hint">创建地址：GitHub → Settings → Developer settings → Personal access tokens</span>
+        <span class="hint">在 GitHub → Settings → Developer settings → Personal access tokens 创建；也可以用本机 <code>gh auth login</code> 的登录态。</span>
       </div>
-      <div class="sactions">
-        <button type="button" class="btn primary" onclick="testTarget('github')" {{ 'disabled' if not settings_writable else '' }}>测试连接</button>
+
+      <div class="panel-foot">
+        <button type="button" class="btn" onclick="testTarget('github')" {{ 'disabled' if not settings_writable else '' }}>测试连接</button>
+        <div class="result" id="ghResult"></div>
       </div>
-      <div class="result" id="ghResult"></div>
     </section>
 
-    <section class="scard">
-      <h2><span class="num">2</span>模型服务（生成中文介绍）</h2>
-      <p class="sub">任意 OpenAI 兼容接口都能用：DeepSeek / OpenAI / 本地 Ollama / 自建网关。默认按 DeepSeek 配。</p>
-      <div class="statusline">
-        当前：
-        <span class="pill">{{ current.provider }}</span>
-        <span class="pill">{{ current.model or '未设置模型' }}</span>
-        {% if has_llm_key %}<span class="pill ok">API Key 已配置</span>{% else %}<span class="pill warn">API Key 未配置</span>{% endif %}
+    <section class="panel" id="ai-model">
+      <div class="panel-head">
+        <span class="picon violet">{{ icon("sparkles") }}</span>
+        <div class="ptitle">
+          <h2>AI 模型</h2>
+          <p>生成中文介绍、翻译与打标签，任意 OpenAI 兼容接口都能用。</p>
+        </div>
+        {% if has_llm_key or current.provider == 'ollama' %}
+        <span class="pill ok">已配置</span>
+        {% else %}
+        <span class="pill warn">待配置</span>
+        {% endif %}
       </div>
-      <div class="srow">
-        <label for="provider">服务类型</label>
-        <select id="provider" onchange="applyPreset()">
-          <option value="deepseek" {{ 'selected' if current.provider == 'deepseek' else '' }}>DeepSeek（推荐，便宜）</option>
+
+      <div class="field">
+        <label>服务类型</label>
+        <div class="provgrid" role="group" aria-label="模型服务类型">
+          <button type="button" class="provtile {{ 'active' if current.provider == 'deepseek' else '' }}"
+            data-provider="deepseek" aria-pressed="{{ 'true' if current.provider == 'deepseek' else 'false' }}"
+            onclick="selectProvider('deepseek')">
+            <span class="provdot deepseek"></span>
+            <span class="provname">DeepSeek</span>
+            <span class="provdesc">推荐 · 中文好</span>
+          </button>
+          <button type="button" class="provtile {{ 'active' if current.provider == 'openai' else '' }}"
+            data-provider="openai" aria-pressed="{{ 'true' if current.provider == 'openai' else 'false' }}"
+            onclick="selectProvider('openai')">
+            <span class="provdot openai"></span>
+            <span class="provname">OpenAI</span>
+            <span class="provdesc">稳定 · 按量计费</span>
+          </button>
+          <button type="button" class="provtile {{ 'active' if current.provider == 'ollama' else '' }}"
+            data-provider="ollama" aria-pressed="{{ 'true' if current.provider == 'ollama' else 'false' }}"
+            onclick="selectProvider('ollama')">
+            <span class="provdot ollama"></span>
+            <span class="provname">Ollama</span>
+            <span class="provdesc">本地 · 免费</span>
+          </button>
+          <button type="button" class="provtile {{ 'active' if current.provider == 'custom' else '' }}"
+            data-provider="custom" aria-pressed="{{ 'true' if current.provider == 'custom' else 'false' }}"
+            onclick="selectProvider('custom')">
+            <span class="provdot custom"></span>
+            <span class="provname">自定义</span>
+            <span class="provdesc">兼容接口</span>
+          </button>
+        </div>
+        <select id="provider" hidden tabindex="-1" aria-hidden="true" onchange="applyPreset()">
+          <option value="deepseek" {{ 'selected' if current.provider == 'deepseek' else '' }}>DeepSeek</option>
           <option value="openai" {{ 'selected' if current.provider == 'openai' else '' }}>OpenAI</option>
-          <option value="ollama" {{ 'selected' if current.provider == 'ollama' else '' }}>本地 Ollama（免费）</option>
-          <option value="custom" {{ 'selected' if current.provider == 'custom' else '' }}>自定义 OpenAI 兼容接口</option>
+          <option value="ollama" {{ 'selected' if current.provider == 'ollama' else '' }}>Ollama</option>
+          <option value="custom" {{ 'selected' if current.provider == 'custom' else '' }}>自定义</option>
         </select>
       </div>
-      <div class="srow">
-        <label for="baseUrl">Base URL</label>
-        <input id="baseUrl" spellcheck="false" value="{{ current.base_url }}" placeholder="https://api.deepseek.com">
-        <span class="hint">填到 /v1 或接口根路径都行，程序会自动补 <code>/chat/completions</code></span>
+
+      <div class="field-grid">
+        <div class="field">
+          <label for="model">模型名</label>
+          <input id="model" spellcheck="false" value="{{ current.model }}" placeholder="deepseek-chat">
+        </div>
+        <div class="field">
+          <label for="baseUrl">Base URL</label>
+          <input id="baseUrl" spellcheck="false" value="{{ current.base_url }}" placeholder="https://api.deepseek.com">
+          <span class="hint">填到 <code>/v1</code> 或接口根路径都行，程序会自动补 <code>/chat/completions</code>。</span>
+        </div>
       </div>
-      <div class="srow">
-        <label for="model">模型名</label>
-        <input id="model" spellcheck="false" value="{{ current.model }}" placeholder="deepseek-chat">
-      </div>
-      <div class="srow">
+
+      <div class="field">
         <label for="apiKey">API Key</label>
         <div class="inputwrap">
           <input id="apiKey" type="password" spellcheck="false" autocomplete="off"
@@ -102,97 +193,134 @@
           </button>
         </div>
       </div>
-      <div class="checks">
-        <label><input type="checkbox" id="jsonMode" {{ 'checked' if current.json_mode else '' }}> JSON 模式（response_format）</label>
-        <label><input type="checkbox" id="disableThinking" {{ 'checked' if current.disable_thinking else '' }}> 关闭思考模式（DeepSeek 建议开）</label>
+
+      <div class="switchrow">
+        <label class="switch">
+          <input type="checkbox" id="jsonMode" {{ 'checked' if current.json_mode else '' }}>
+          <span class="track"></span>
+          <span class="switchlabel">JSON 模式</span>
+        </label>
+        <label class="switch">
+          <input type="checkbox" id="disableThinking" {{ 'checked' if current.disable_thinking else '' }}>
+          <span class="track"></span>
+          <span class="switchlabel">关闭思考模式</span>
+        </label>
       </div>
-      <div class="sactions">
-        <button type="button" class="btn primary" id="saveBtn" onclick="saveSettings()" {{ 'disabled' if not settings_writable else '' }}>保存配置</button>
+
+      <div class="panel-foot">
         <button type="button" class="btn" onclick="testTarget('llm')" {{ 'disabled' if not settings_writable else '' }}>测试模型</button>
-      </div>
-      <div class="savehint" id="saveHint" aria-live="polite"></div>
-      <div class="result" id="llmResult"></div>
-    </section>
-
-    <section class="scard statuscard">
-      <h2><span class="num">3</span>采集状态</h2>
-      <p class="sub">最近一次采集失败的原因会显示在这里，首页顶部也会提示；完整日志在启动窗口的 stderr（后台脚本 / cron 会重定向到 <code>data/logs/</code>，Docker 用 <code>docker compose logs</code>）。</p>
-      <div class="statusgrid">
-        <span class="item">最近成功：
-          {% if stats.last_wave_at %}<span class="pill ok">{{ (stats.last_wave_at or '')[:16] | replace('T',' ') }}</span>
-          {% else %}<span class="pill warn">还没有成功采集过</span>{% endif %}
-        </span>
-        {% if stats.collecting %}<span class="item"><span class="status-dot busy"></span>采集中…</span>{% endif %}
-        <span class="item">仓库 <b class="mono">{{ stats.repos }}</b></span>
-      </div>
-      {% if stats.last_error %}
-      <div class="result {{ 'err' if stats.error_active else '' }}">
-        最近一次失败（{{ (stats.last_error_at or '')[:16] | replace('T',' ') }} · {{ stats.last_error_scope or 'collect' }}）：
-        {{ stats.last_error }}
-        {% if not stats.error_active %}<span class="muted">（后续采集已成功）</span>{% endif %}
-      </div>
-      {% else %}
-      <div class="result ok">最近没有采集失败记录。</div>
-      {% endif %}
-      {% if needs_setup %}<p class="hint">还没配 Key 时采集失败属于预期，先完成上面两步配置。</p>{% endif %}
-    </section>
-
-    <section class="scard netcard" id="network">
-      <h2><span class="num">4</span>网络状态</h2>
-      <p class="sub">检测本机到 GitHub API、GitHub 图片 CDN 和模型接口的连通性。国内网络直连 GitHub 图片 CDN 常会超时，如有代理可在下面填写。</p>
-      <div class="netrows">
-        <div class="netrow">
-          <span class="netname">GitHub API</span>
-          <span class="pill" id="net-github-pill">检测中…</span>
-          <span class="netdetail" id="net-github-detail"></span>
-        </div>
-        <div class="netrow">
-          <span class="netname">图片 CDN</span>
-          <span class="pill" id="net-images-pill">检测中…</span>
-          <span class="netdetail" id="net-images-detail"></span>
-        </div>
-        <div class="netrow">
-          <span class="netname">模型接口</span>
-          <span class="pill" id="net-llm-pill">检测中…</span>
-          <span class="netdetail" id="net-llm-detail"></span>
-        </div>
-      </div>
-      <div class="netmeta">
-        <span id="netChecked">尚未检测</span>
-        <span id="netProxy">代理：—</span>
-      </div>
-      <div class="srow">
-        <label for="radarProxy">网络代理 RADAR_PROXY（可选）</label>
-        <input id="radarProxy" spellcheck="false" autocomplete="off"
-          placeholder="{{ ('已配置：' ~ radar_proxy_display ~ '，留空保持不变') if radar_proxy_configured else '例如 http://127.0.0.1:7897（留空 = 直连）' }}">
-        <span class="hint">用于 GitHub API 与缩略图 CDN；填 <code>direct</code> / <code>none</code> 可清除。模型接口默认直连，如需代理可在 <code>.env</code> 设置 <code>LLM_PROXY</code>。</span>
-      </div>
-      <div class="sactions">
-        <button type="button" class="btn sm" onclick="refreshNetwork(true)">重新检测</button>
-        <button type="button" class="btn primary sm" onclick="saveSettings()" {{ 'disabled' if not settings_writable else '' }}>保存代理配置</button>
+        <div class="result" id="llmResult"></div>
       </div>
     </section>
 
-    <section class="scard thumbcard" id="thumbs">
-      <h2><span class="num">5</span>预览图缓存</h2>
-      <p class="sub">预览图第一次加载后会压缩保存到本地 <code>data/thumbs</code>（240 / 480 / 960 三种尺寸），之后直接读本地，不会重复下载。图片 CDN 有频率限制，一次预下载 30 张比较稳；配置 <code>RADAR_PROXY</code> 后可以多下一些。</p>
-      <div class="statusgrid">
-        <span class="item">本地已缓存 <b class="mono" id="thumbCached">—</b> 个仓库</span>
-        <span class="item">有预览图来源 <b class="mono" id="thumbTotal">—</b> 个</span>
-        <span class="item" id="thumbState">读取中…</span>
+    <details class="adv" id="network">
+      <summary>
+        <span class="picon small">{{ icon("wifi") }}</span>
+        <span class="advtitle"><b>网络与代理</b><small>GitHub API / 图片 CDN / 模型接口</small></span>
+        <span class="advmeta" id="netSummary">检测中…</span>
+        {{ icon("chevron", "chev") }}
+      </summary>
+      <div class="advbody">
+        <div class="netrows">
+          <div class="netrow">
+            <span class="netname">GitHub API</span>
+            <span class="pill" id="net-github-pill">检测中…</span>
+            <span class="netdetail" id="net-github-detail"></span>
+          </div>
+          <div class="netrow">
+            <span class="netname">图片 CDN</span>
+            <span class="pill" id="net-images-pill">检测中…</span>
+            <span class="netdetail" id="net-images-detail"></span>
+          </div>
+          <div class="netrow">
+            <span class="netname">模型接口</span>
+            <span class="pill" id="net-llm-pill">检测中…</span>
+            <span class="netdetail" id="net-llm-detail"></span>
+          </div>
+        </div>
+        <div class="netmeta">
+          <span id="netChecked">尚未检测</span>
+          <span id="netProxy">代理：—</span>
+        </div>
+        <div class="field">
+          <label for="radarProxy">网络代理（可选）</label>
+          <input id="radarProxy" spellcheck="false" autocomplete="off"
+            placeholder="{{ ('已配置：' ~ radar_proxy_display ~ '，留空保持不变') if radar_proxy_configured else '例如 http://127.0.0.1:7897（留空 = 直连）' }}">
+          <span class="hint">用于 GitHub API 与缩略图 CDN，改完点下方「保存配置」。填 <code>direct</code> / <code>none</code> 可清除；模型接口如需代理可在 <code>.env</code> 设置 <code>LLM_PROXY</code>。</span>
+        </div>
+        <div class="adv-actions">
+          <button type="button" class="btn sm" onclick="refreshNetwork(true)">重新检测</button>
+        </div>
       </div>
-      <div class="sactions">
-        <button type="button" class="btn sm" onclick="loadThumbCache()">刷新状态</button>
-        <button type="button" class="btn primary sm" id="thumbPrefetchBtn" onclick="prefetchThumbs()" {{ 'disabled' if not settings_writable else '' }}>预下载未读卡片</button>
+    </details>
+
+    <details class="adv" id="thumbs">
+      <summary>
+        <span class="picon small">{{ icon("image") }}</span>
+        <span class="advtitle"><b>预览图缓存</b><small>下载一次，之后直接读本地</small></span>
+        <span class="advmeta" id="thumbSummary">—</span>
+        {{ icon("chevron", "chev") }}
+      </summary>
+      <div class="advbody">
+        <div class="statusgrid">
+          <span class="item">本地已缓存 <b class="mono" id="thumbCached">—</b> 个仓库</span>
+          <span class="item">有预览图来源 <b class="mono" id="thumbTotal">—</b> 个</span>
+          <span class="item" id="thumbState">读取中…</span>
+        </div>
+        <p class="hint">图片 CDN 有频率限制，一次预下载 30 张比较稳；配置代理后可以多下一些。缓存目录可随时删除，不会丢数据。</p>
+        <div class="adv-actions">
+          <button type="button" class="btn sm" onclick="loadThumbCache()">刷新状态</button>
+          <button type="button" class="btn primary sm" id="thumbPrefetchBtn" onclick="prefetchThumbs()" {{ 'disabled' if not settings_writable else '' }}>预下载未读卡片</button>
+        </div>
+        <div class="savehint" id="thumbHint"></div>
       </div>
-      <div class="savehint" id="thumbHint"></div>
-    </section>
+    </details>
+
+    <details class="adv" id="collect">
+      <summary>
+        <span class="picon small">{{ icon("database") }}</span>
+        <span class="advtitle"><b>采集与日志</b><small>采集状态 · 最近一次结果</small></span>
+        <span class="advmeta">{{ '采集中…' if stats.collecting else '正常' }}</span>
+        {{ icon("chevron", "chev") }}
+      </summary>
+      <div class="advbody">
+        <div class="statusgrid">
+          <span class="item">最近成功：
+            {% if stats.last_wave_at %}<span class="pill ok">{{ (stats.last_wave_at or '')[:16] | replace('T',' ') }}</span>
+            {% else %}<span class="pill warn">还没有成功采集过</span>{% endif %}
+          </span>
+          <span class="item">仓库 <b class="mono">{{ stats.repos }}</b></span>
+        </div>
+        {% if stats.last_error %}
+        <div class="result {{ 'err' if stats.error_active else '' }}">
+          最近一次失败（{{ (stats.last_error_at or '')[:16] | replace('T',' ') }} · {{ stats.last_error_scope or 'collect' }}）：
+          {{ stats.last_error }}
+          {% if not stats.error_active %}<span class="muted">（后续采集已成功）</span>{% endif %}
+        </div>
+        {% else %}
+        <div class="result ok">最近没有采集失败记录。</div>
+        {% endif %}
+        <p class="hint">完整日志在数据目录的 <code>logs/</code> 里；首页顶部也会提示采集失败。</p>
+        {% if needs_setup %}<p class="hint">还没配 Key 时采集失败属于预期，先完成上面的 GitHub 与 AI 配置。</p>{% endif %}
+      </div>
+    </details>
   </div>
 
   <div class="foot">
-    保存后立即生效（无需重启）。环境变量优先级高于 <code>.env</code>；<code>.env</code> 已在 <code>.gitignore</code> 里，不会被提交。
+    保存后立即生效（无需重启）。配置保存在本地 <code>.env</code> 中，环境变量优先级更高。
     <br><span class="muted">GitHub 中文雷达 v{{ version }}</span>
-    {% if needs_setup %}<br>配置好后回到 <a href="/">信息流</a> 即可开始；如果还没有数据，先跑一次采集（见 README）。{% endif %}
+    {% if needs_setup %}<br>配置好后回到 <a href="/">信息流</a> 即可开始。{% endif %}
+  </div>
+
+  <div class="save-dock" id="saveDock" hidden>
+    <div class="dock-info">
+      <span class="dock-title">{{ icon("save") }} 保存配置</span>
+      <span class="dock-hint" id="saveHint" aria-live="polite">修改后点击保存，立即生效</span>
+    </div>
+    <div class="dock-actions">
+      <button type="button" class="btn" onclick="testTarget('llm')" {{ 'disabled' if not settings_writable else '' }}>测试模型</button>
+      <button type="button" class="btn primary" id="saveBtn" onclick="saveSettings()" {{ 'disabled' if not settings_writable else '' }}>保存配置</button>
+    </div>
   </div>
 </div>
 {% endblock %}
