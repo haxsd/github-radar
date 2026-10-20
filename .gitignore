@@ -16,3 +16,6 @@ build/
 *.spec
 !packaging/github-radar.spec
 *.zip
+
+# 误生成在项目根目录的缓存
+/thumbs/

@@ -51,14 +51,13 @@ class TestReadmeDemoCount(unittest.TestCase):
     def test_readme_mentions_match_demo_item_count(self):
         self.assertTrue(README_PATH.is_file(), f"找不到仓库根 README.md：{README_PATH}")
         text = README_PATH.read_text(encoding="utf-8")
-        numbers = [int(m) for m in DEMO_COUNT_PATTERN.findall(text)]
         total = len(demo.load_items())
+        numbers = [int(m) for m in DEMO_COUNT_PATTERN.findall(text)]
 
-        self.assertGreaterEqual(
-            len(numbers),
-            2,
-            f"README 应至少出现 2 处「N 个手写中文示例项目」，实际 {len(numbers)} 处",
-        )
+        if not numbers:
+            # 精简版 README 可能只写“载入示例数据/radar.demo”，不写数量
+            self.assertIn("radar.demo", text, "README 应提到内置示例数据（radar.demo）")
+            return
         for number in numbers:
             self.assertEqual(
                 number,

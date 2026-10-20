@@ -16,6 +16,7 @@ a = Analysis(
         (str(ROOT / "assets" / "icon.png"), "assets"),
         (str(ROOT / "LICENSE"), "."),
         (str(ROOT / "README.md"), "."),
+        (str(ROOT / "README-EN.md"), "."),
         (str(ROOT / ".env.example"), "."),
         (str(ROOT / "packaging" / "使用说明.txt"), "."),
     ],

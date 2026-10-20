@@ -198,7 +198,7 @@ def _run_tray(url: str, open_initial_window: bool) -> None:
 
     def on_data_dir(icon, item):
         try:
-            os.startfile(str(config.DATA_DIR))
+            os.startfile(str(config.BASE_DIR))
         except OSError:
             pass
 
@@ -299,6 +299,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _build_parser().parse_args()
     config.ensure_dirs()
+    config.migrate_legacy_layout()
     _redirect_frozen_streams()
     config.setup_logging()
 

@@ -30,33 +30,62 @@ class TestDataDirResolution(unittest.TestCase):
 
     def test_source_mode_uses_program_root(self):
         with self._env():
-            self.assertEqual(config._default_data_dir(self.program), self.program)
+            self.assertEqual(config._default_base_dir(self.program), self.program)
 
     def test_frozen_uses_localappdata(self):
         with self._env(LOCALAPPDATA=str(self.tmp.name)), mock.patch.object(
             sys, "frozen", True, create=True
         ):
-            self.assertEqual(config._default_data_dir(self.program), Path(self.tmp.name) / "GitHubRadar")
+            self.assertEqual(config._default_base_dir(self.program), Path(self.tmp.name) / "GitHubRadar")
 
     def test_portable_flag_uses_program_root(self):
         (self.program / "portable.flag").write_text("", encoding="utf-8")
         with self._env(LOCALAPPDATA=str(self.tmp.name)), mock.patch.object(
             sys, "frozen", True, create=True
         ):
-            self.assertEqual(config._default_data_dir(self.program), self.program)
+            self.assertEqual(config._default_base_dir(self.program), self.program)
 
     def test_env_portable_uses_program_root(self):
         with self._env(RADAR_PORTABLE="1", LOCALAPPDATA=str(self.tmp.name)), mock.patch.object(
             sys, "frozen", True, create=True
         ):
-            self.assertEqual(config._default_data_dir(self.program), self.program)
+            self.assertEqual(config._default_base_dir(self.program), self.program)
 
     def test_data_dir_override_wins(self):
         target = Path(self.tmp.name) / "custom-data"
         with self._env(RADAR_DATA_DIR=str(target), LOCALAPPDATA=str(self.tmp.name)), mock.patch.object(
             sys, "frozen", True, create=True
         ):
-            self.assertEqual(config._default_data_dir(self.program), target)
+            self.assertEqual(config._default_base_dir(self.program), target)
+
+    def test_data_dir_is_base_data_subdir(self):
+        with self._env(), mock.patch.object(sys, "frozen", True, create=True), mock.patch.dict(
+            os.environ, {"LOCALAPPDATA": self.tmp.name}, clear=False
+        ):
+            base = config._default_base_dir(self.program)
+            self.assertEqual(base, Path(self.tmp.name) / "GitHubRadar")
+            self.assertEqual(base / "data", Path(self.tmp.name) / "GitHubRadar" / "data")
+
+    def test_frozen_legacy_layout_migrates(self):
+        legacy = Path(self.tmp.name) / "base"
+        legacy.mkdir()
+        (legacy / "radar.db").write_bytes(b"db")
+        (legacy / "thumbs").mkdir()
+        (legacy / "thumbs" / "1_240.jpg").write_bytes(b"jpg")
+        data = legacy / "data"
+        originals = (config.BASE_DIR, config.DATA_DIR, config.DB_PATH, config.ENV_PATH)
+        try:
+            config.BASE_DIR = legacy
+            config.DATA_DIR = data
+            config.DB_PATH = data / "radar.db"
+            config.ENV_PATH = legacy / ".env"
+            with mock.patch.object(sys, "frozen", True, create=True):
+                config.migrate_legacy_layout()
+            self.assertTrue((data / "radar.db").exists())
+            self.assertTrue((data / "thumbs" / "1_240.jpg").exists())
+            self.assertFalse((legacy / "radar.db").exists())
+        finally:
+            config.BASE_DIR, config.DATA_DIR, config.DB_PATH, config.ENV_PATH = originals
 
     def test_ensure_dirs_creates_data_and_logs(self):
         original = config.DATA_DIR

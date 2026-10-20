@@ -44,13 +44,13 @@ def _local_appdata() -> Path:
     return Path.home() / "AppData" / "Local"
 
 
-def _default_data_dir(program_root: Path) -> Path:
-    """数据目录（.env / radar.db / thumbs / logs）。
+def _default_base_dir(program_root: Path) -> Path:
+    """数据根目录（下面放 data/ 与 .env）。
 
-    - 源码运行：项目根目录（保持开发习惯）；
-    - 打包运行：%LOCALAPPDATA%\\GitHubRadar（安装到用户目录也能写）；
-    - 便携模式：exe 同目录；
-    - RADAR_DATA_DIR 可覆盖。
+    - 源码运行：项目根目录 → data/ 与 .env 保持原来的位置；
+    - 打包运行：%LOCALAPPDATA%\\GitHubRadar → data/ 与 .env 在用户目录；
+    - 便携模式：exe 同目录 → data/ 与 .env 跟着程序走；
+    - RADAR_DATA_DIR 可覆盖数据根目录。
     """
     override = (os.environ.get("RADAR_DATA_DIR") or "").strip()
     if override:
@@ -63,9 +63,39 @@ def _default_data_dir(program_root: Path) -> Path:
 
 
 ROOT = _program_root()
-DATA_DIR = _default_data_dir(ROOT)
+BASE_DIR = _default_base_dir(ROOT)
+DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "radar.db"
-ENV_PATH = DATA_DIR / ".env"
+ENV_PATH = BASE_DIR / ".env"
+
+
+def migrate_legacy_layout() -> None:
+    """兼容 v0.6.0 的错误布局：把根目录下的 radar.db/thumbs/logs 移进 data/。
+
+    v0.6.0 打包版曾把数据直接放在数据根目录；v0.6.1 起统一为
+    <base>/data/radar.db、<base>/data/thumbs、<base>/data/logs，.env 仍在根目录。
+    只在打包版执行，源码版的老数据本来就在 data/ 下。
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    legacy_db = BASE_DIR / "radar.db"
+    if not legacy_db.exists() or DB_PATH.exists():
+        return
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(legacy_db), str(DB_PATH))
+        for name in ("thumbs", "logs"):
+            source = BASE_DIR / name
+            if source.is_dir():
+                target = DATA_DIR / name
+                if target.exists():
+                    shutil.copytree(source, target, dirs_exist_ok=True)
+                    shutil.rmtree(source, ignore_errors=True)
+                else:
+                    shutil.move(str(source), str(target))
+        logger.info("已将旧版数据从 %s 迁移到 %s", BASE_DIR, DATA_DIR)
+    except OSError as exc:
+        logger.warning("旧版数据目录迁移失败: %s", exc)
 
 # 常见 OpenAI 兼容服务的默认值（可在 .env / 设置页覆盖）
 PROVIDERS: dict[str, dict[str, object]] = {

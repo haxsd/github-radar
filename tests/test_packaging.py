@@ -51,7 +51,11 @@ class TestPackagingFiles(unittest.TestCase):
     def test_readme_mentions_install(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("GitHubRadar-Setup-", readme)
-        self.assertIn("--import-data", readme)
+        self.assertIn("%LOCALAPPDATA%", readme)
+        readme_en = (ROOT / "README-EN.md").read_text(encoding="utf-8")
+        self.assertIn("GitHubRadar-Setup-", readme_en)
+        notes = (ROOT / "packaging" / "使用说明.txt").read_text(encoding="utf-8")
+        self.assertIn("--import-data", notes)
 
 
 if __name__ == "__main__":
