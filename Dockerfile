@@ -1,5 +1,7 @@
 FROM python:3.13-slim
 
+# 容器内必须监听 0.0.0.0，宿主机的端口映射才能把请求转进来；
+# 对外只应把端口发布到宿主机回环地址（见 docker-compose.yml），不要直接暴露公网。
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     WEB_HOST=0.0.0.0 \

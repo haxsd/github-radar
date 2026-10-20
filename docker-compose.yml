@@ -3,7 +3,10 @@ services:
     build: .
     container_name: starscout
     ports:
-      - "8765:8765"
+      # 默认只发布到宿主机回环地址（127.0.0.1），仅本机可访问，不要直接暴露公网。
+      # 如需 NAS / 局域网访问：改成 "8765:8765"，并务必在 .env 里设置 WEB_ADMIN_TOKEN；
+      # 否则来自非本机地址的「保存设置 / 测试连接」接口会返回 403，设置页只读。
+      - "127.0.0.1:8765:8765"
     env_file:
       - .env
     environment:

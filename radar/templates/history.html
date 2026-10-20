@@ -1,32 +1,9 @@
 {% extends "base.html" %}
 {% block title %}历史 · GitHub 中文雷达{% endblock %}
+{% from "_macros.html" import empty %}
 
 {% block style %}
-  .head{padding:10px 0 20px;border-bottom:1px solid var(--stroke);margin-bottom:22px}
-  .head h1{font-size:26px;margin:0 0 8px;letter-spacing:-.3px}
-  .head p{margin:0;color:var(--muted);font-size:13.5px}
-  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
-  .tab{cursor:pointer;font-size:14px;padding:8px 16px;border-radius:999px;color:var(--text-dim);
-    border:1px solid var(--stroke-strong);background:rgba(255,255,255,.03);transition:.16s}
-  .tab:hover{color:var(--text);background:rgba(255,255,255,.07)}
-  .tab.active{color:#fff;border-color:rgba(120,160,255,.4);
-    background:linear-gradient(135deg,rgba(91,140,255,.24),rgba(160,107,255,.2))}
-  .panel{display:none}
-  .panel.active{display:block}
-  .hrow{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center;padding:14px 16px;
-    border-radius:14px;border:1px solid var(--stroke);background:rgba(255,255,255,.025);
-    margin-bottom:10px;transition:.15s}
-  .hrow:hover{background:rgba(255,255,255,.05);border-color:var(--stroke-strong)}
-  .hname{font-weight:700;font-size:15.5px;margin-bottom:3px;word-break:break-word}
-  .hname a:hover{color:#bcd3ff}
-  .hdesc{color:#aab6c8;font-size:13px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:1;
-    -webkit-box-orient:vertical;margin-bottom:4px}
-  .hmeta{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
-  .htag{font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--stroke-strong);color:var(--text-dim)}
-  .hacts{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-  .btn.small{padding:6px 13px;font-size:12.5px;border-radius:9px}
-  .empty{padding:60px 20px;text-align:center;color:var(--muted)}
-  .empty h3{color:var(--text);margin:8px 0;font-size:18px}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/history.css') }}">
 {% endblock %}
 
 {% block content %}
@@ -36,14 +13,14 @@
     <p>看过的、跳过的、收藏的都在这里。跳过后悔了？一键放回信息流。</p>
   </div>
 
-  <div class="tabs" id="tabs">
-    <div class="tab active" data-panel="skipped">跳过（{{ data.skipped|length }}，可恢复）</div>
-    <div class="tab" data-panel="liked">感兴趣（{{ data.liked|length }}）</div>
-    <div class="tab" data-panel="saved">收藏（{{ data.saved|length }}）</div>
+  <div class="tabs" id="tabs" role="tablist" aria-label="历史分类">
+    <button type="button" class="tab active" data-panel="skipped" role="tab" aria-selected="true">跳过（{{ data.skipped|length }}，可恢复）</button>
+    <button type="button" class="tab" data-panel="liked" role="tab" aria-selected="false">感兴趣（{{ data.liked|length }}）</button>
+    <button type="button" class="tab" data-panel="saved" role="tab" aria-selected="false">收藏（{{ data.saved|length }}）</button>
   </div>
 
   {% for key, items in [('skipped', data.skipped), ('liked', data.liked), ('saved', data.saved)] %}
-  <div class="panel {{ 'active' if loop.first else '' }}" data-panel="{{ key }}">
+  <div class="panel {{ 'active' if loop.first else '' }}" data-panel="{{ key }}" role="tabpanel">
     {% for c in items %}
     <div class="hrow" data-repo="{{ c.repo_id }}">
       <div style="min-width:0">
@@ -59,17 +36,16 @@
       </div>
       <div class="hacts">
         {% if key == 'skipped' %}
-        <button class="btn ghost small" onclick="unsee({{ c.repo_id }}, this)">放回信息流</button>
+        <button type="button" class="btn ghost sm" onclick="unsee({{ c.repo_id }}, this)">放回信息流</button>
         {% endif %}
         {% if key == 'saved' %}
-        <button class="btn ghost small" onclick="unsave({{ c.repo_id }}, this)">取消收藏</button>
+        <button type="button" class="btn ghost sm" onclick="unsave({{ c.repo_id }}, this)">取消收藏</button>
         {% endif %}
-        <a class="btn ghost small" href="{{ c.html_url }}" target="_blank" rel="noreferrer">打开</a>
+        <a class="btn ghost sm" href="{{ c.html_url }}" target="_blank" rel="noreferrer">打开</a>
       </div>
     </div>
     {% else %}
-    <div class="empty"><div style="font-size:34px">🗂</div><h3>这里还是空的</h3>
-      <p>去信息流刷一刷，跳过/收藏的动作会记录在这里。</p></div>
+    {{ empty('这里还是空的', '去信息流刷一刷，跳过/收藏的动作会记录在这里。', 'clock') }}
     {% endfor %}
   </div>
   {% endfor %}
@@ -77,39 +53,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-document.querySelectorAll("#tabs .tab").forEach(tab => {
-  tab.onclick = () => {
-    document.querySelectorAll("#tabs .tab").forEach(t => t.classList.remove("active"));
-    document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
-    tab.classList.add("active");
-    const p = document.querySelector(`.panel[data-panel="${tab.dataset.panel}"]`);
-    if (p) p.classList.add("active");
-  };
-});
-function toast(msg){
-  const el=document.getElementById("toast"); if(!el) return;
-  el.textContent=msg; el.classList.add("show");
-  clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove("show"),1600);
-}
-async function postAction(repoId, action){
-  const r = await fetch("/api/action", {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({repo_id: repoId, action})});
-  return r.ok;
-}
-function fadeOut(btn){
-  const row = btn.closest(".hrow");
-  if(!row) return;
-  row.style.transition = ".22s"; row.style.opacity = "0"; row.style.transform = "translateX(16px)";
-  setTimeout(()=>row.remove(), 220);
-}
-async function unsee(id, btn){
-  if(await postAction(id, "unsee")){ toast("已放回信息流 ✓"); fadeOut(btn); }
-  else toast("操作失败");
-}
-async function unsave(id, btn){
-  if(await postAction(id, "unsave")){ toast("已取消收藏"); fadeOut(btn); }
-  else toast("操作失败");
-}
-</script>
+<script src="{{ url_for('static', filename='js/history.js') }}"></script>
 {% endblock %}

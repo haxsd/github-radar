@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -14,6 +15,8 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 
 def _app_root() -> Path:
@@ -79,6 +82,8 @@ LLM_JSON_MODE: bool = True
 LLM_DISABLE_THINKING: bool = True
 WEB_HOST: str = "127.0.0.1"
 WEB_PORT: int = 8765
+# 非本机访问时修改设置/测试连接所需的管理口令；留空 = 禁止远程改设置
+WEB_ADMIN_TOKEN: str = ""
 
 # 由 _load 管理的键：真实环境变量优先级高于 .env，同时 .env 改动后能热加载
 _MANAGED_ENV = (
@@ -96,13 +101,14 @@ _MANAGED_ENV = (
     "DEEPSEEK_MODEL",
     "WEB_HOST",
     "WEB_PORT",
+    "WEB_ADMIN_TOKEN",
 )
 _TRUE_ENV = {key: os.environ[key] for key in _MANAGED_ENV if key in os.environ}
 
 
 def _load() -> None:
     global GITHUB_TOKEN, GH_CLI_PATH, LLM_PROVIDER, LLM_BASE_URL, LLM_API_KEY
-    global LLM_MODEL, LLM_JSON_MODE, LLM_DISABLE_THINKING, WEB_HOST, WEB_PORT
+    global LLM_MODEL, LLM_JSON_MODE, LLM_DISABLE_THINKING, WEB_HOST, WEB_PORT, WEB_ADMIN_TOKEN
 
     # 重置托管键 -> 读取 .env -> 再把真实环境变量覆盖回去
     for key in _MANAGED_ENV:
@@ -135,6 +141,18 @@ def _load() -> None:
         WEB_PORT = int(_env("WEB_PORT") or "8765")
     except ValueError:
         WEB_PORT = 8765
+    WEB_ADMIN_TOKEN = _env("WEB_ADMIN_TOKEN")
+
+
+def setup_logging(level: int = logging.INFO) -> None:
+    """入口统一日志格式；如果外部（gunicorn 等）已配置 handler 就尊重外部配置。"""
+    if logging.getLogger().handlers:
+        return
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
 
 _load()
@@ -191,8 +209,8 @@ def resolve_github_token() -> str:
             token = (out.stdout or "").strip()
             if token:
                 return token
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("读取 gh CLI token 失败: %s", exc)
     raise RuntimeError(
         "找不到 GitHub token：请在网页「设置」里填，或 .env 配置 GITHUB_TOKEN，或先 gh auth login"
     )
@@ -208,8 +226,8 @@ def github_token_status() -> str:
             out = subprocess.run([exe, "auth", "token"], capture_output=True, text=True, timeout=10)
             if (out.stdout or "").strip():
                 return "gh-cli"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("检测 gh CLI 登录态失败: %s", exc)
     return "missing"
 
 
@@ -225,11 +243,17 @@ MANAGED_KEYS = (
 )
 
 
+def _clean_env_value(value: object) -> str:
+    """写入 .env 前清洗：值里不允许出现换行，避免破坏文件或注入别的键。"""
+    return str(value).replace("\r", "").replace("\n", "").strip()
+
+
 def save_env(values: dict[str, str]) -> None:
     """更新 .env 里我们管理的键，其他行原样保留；随后热加载。"""
     lines: list[str] = []
     if ENV_PATH.exists():
         lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
+    cleaned = {key: _clean_env_value(value) for key, value in values.items()}
     result: list[str] = []
     handled: set[str] = set()
     for line in lines:
@@ -238,16 +262,22 @@ def save_env(values: dict[str, str]) -> None:
             key = stripped.split("=", 1)[0].strip()
             if key in MANAGED_KEYS:
                 handled.add(key)
-                if key in values:
-                    result.append(f"{key}={values[key]}")
+                if key in cleaned:
+                    result.append(f"{key}={cleaned[key]}")
                 else:
                     result.append(line)  # 没提供新值就保留旧值
                 continue
         result.append(line)
     for key in MANAGED_KEYS:
-        if key in values and key not in handled:
-            result.append(f"{key}={values[key]}")
+        if key in cleaned and key not in handled:
+            result.append(f"{key}={cleaned[key]}")
     ENV_PATH.write_text("\n".join(result).rstrip() + "\n", encoding="utf-8")
+    if os.name != "nt":
+        # 密钥是明文保存的，尽量收紧文件权限（Windows 由 ACL 管理）
+        try:
+            os.chmod(ENV_PATH, 0o600)
+        except OSError as exc:
+            logger.warning("设置 .env 文件权限失败: %s", exc)
     _load()
 
 

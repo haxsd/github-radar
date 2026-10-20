@@ -49,6 +49,7 @@ def _find_edge() -> str | None:
 
 
 def main() -> None:
+    config.setup_logging()
     config.ensure_dirs()
     conn = db.connect()
     db.init_db(conn)

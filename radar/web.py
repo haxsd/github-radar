@@ -1,19 +1,90 @@
-﻿"""本地网页：信息流 / 榜单 / 收藏 + JSON API。"""
+"""本地网页：信息流 / 榜单 / 收藏 + JSON API。"""
 
 from __future__ import annotations
 
+import hmac
+import ipaddress
+import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urljoin
 
 import requests
 from flask import Flask, jsonify, redirect, render_template, request, send_file
 
-from . import collect, config, db, feed, llm
+from . import collect, config, db, feed, llm, netguard
 
 app = Flask(__name__, template_folder="templates")
+logger = logging.getLogger(__name__)
 
 
 import gzip
+
+
+def _is_loopback(addr: str | None) -> bool:
+    """判断客户端地址是否为本机回环（127.0.0.0/8、::1、localhost、IPv4-mapped IPv6）。"""
+    if not addr:
+        return False
+    value = str(addr).strip()
+    if not value:
+        return False
+    if value.lower() == "localhost":
+        return True
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        return ip.ipv4_mapped.is_loopback
+    return ip.is_loopback
+
+
+def _provided_admin_token(data: dict | None = None) -> str:
+    header = (request.headers.get("X-Radar-Token") or "").strip()
+    if header:
+        return header
+    if isinstance(data, dict):
+        return str(data.get("admin_token") or "").strip()
+    return ""
+
+
+def _can_write_settings(remote_addr: str | None, provided_token: str | None = None) -> bool:
+    """本机访问直接放行；非本机必须带对 WEB_ADMIN_TOKEN。
+
+    没有配置 WEB_ADMIN_TOKEN 时，任何非 loopback 客户端都不能改设置/测试连接，
+    避免 Docker / NAS 暴露到局域网时被其他人写走密钥。
+    """
+    if _is_loopback(remote_addr):
+        return True
+    admin = (config.WEB_ADMIN_TOKEN or "").strip()
+    if not admin or not provided_token:
+        return False
+    # compare_digest 的 str 版本只支持 ASCII；统一编码成 bytes，顺便避免中文口令 500
+    try:
+        return hmac.compare_digest(admin.encode("utf-8"), str(provided_token).strip().encode("utf-8"))
+    except (TypeError, ValueError):
+        return False
+
+
+def _settings_denied_response():
+    return (
+        jsonify(
+            {
+                "ok": False,
+                "error": "已拒绝远程修改设置：请在本机访问；或在 .env 配置 WEB_ADMIN_TOKEN 后重启，并在设置页填写管理口令。",
+            }
+        ),
+        403,
+    )
+
+
+def _has_newline(values: dict) -> bool:
+    for value in values.values():
+        text = str(value)
+        if "\n" in text or "\r" in text:
+            return True
+    return False
 
 
 @app.after_request
@@ -105,6 +176,8 @@ def daily_page():
 
 @app.get("/settings")
 def settings_page():
+    remote_client = not _is_loopback(request.remote_addr)
+    settings_writable = (not remote_client) or bool((config.WEB_ADMIN_TOKEN or "").strip())
     return render_template(
         "settings.html",
         **_ctx("settings"),
@@ -119,24 +192,35 @@ def settings_page():
         github_status=config.github_token_status(),
         has_llm_key=bool(config.LLM_API_KEY),
         web_port=config.WEB_PORT,
+        settings_remote=remote_client,
+        settings_writable=settings_writable,
     )
 
 
 @app.post("/api/settings")
 def api_settings_save():
     data = request.get_json(silent=True) or {}
+    if not _can_write_settings(request.remote_addr, _provided_admin_token(data)):
+        logger.warning("拒绝设置写入请求，remote=%s", request.remote_addr)
+        return _settings_denied_response()
     values: dict[str, str] = {}
     token = str(data.get("github_token") or "").strip()
-    if token:
-        values["GITHUB_TOKEN"] = token
     provider = str(data.get("provider") or config.LLM_PROVIDER).strip().lower()
     if provider not in config.PROVIDERS:
         return jsonify({"ok": False, "error": "未知的模型服务"}), 400
     preset = config.PROVIDERS[provider]
-    values["LLM_PROVIDER"] = provider
-    values["LLM_BASE_URL"] = str(data.get("base_url") or "").strip() or str(preset["base_url"] or "")
-    values["LLM_MODEL"] = str(data.get("model") or "").strip() or str(preset["model"] or "")
+    base_url = str(data.get("base_url") or "").strip() or str(preset["base_url"] or "")
+    model = str(data.get("model") or "").strip() or str(preset["model"] or "")
     api_key = str(data.get("api_key") or "").strip()
+    if _has_newline(
+        {"github_token": token, "base_url": base_url, "model": model, "api_key": api_key}
+    ):
+        return jsonify({"ok": False, "error": "配置值不能包含换行符"}), 400
+    if token:
+        values["GITHUB_TOKEN"] = token
+    values["LLM_PROVIDER"] = provider
+    values["LLM_BASE_URL"] = base_url
+    values["LLM_MODEL"] = model
     if api_key:
         values["LLM_API_KEY"] = api_key
     values["LLM_JSON_MODE"] = "1" if data.get("json_mode", True) else "0"
@@ -144,6 +228,7 @@ def api_settings_save():
     try:
         config.save_env(values)
     except Exception as exc:
+        logger.warning("写入 .env 失败: %s", exc)
         return jsonify({"ok": False, "error": f"写入 .env 失败：{exc}"}), 500
     return jsonify(
         {
@@ -158,6 +243,9 @@ def api_settings_save():
 @app.post("/api/settings/test")
 def api_settings_test():
     data = request.get_json(silent=True) or {}
+    if not _can_write_settings(request.remote_addr, _provided_admin_token(data)):
+        logger.warning("拒绝远程设置测试请求，remote=%s", request.remote_addr)
+        return _settings_denied_response()
     target = data.get("target")
     if target == "github":
         try:
@@ -195,6 +283,7 @@ def api_settings_test():
 THUMB_DIR = config.DATA_DIR / "thumbs"
 _THUMB_PENDING: set[tuple[int, int]] = set()
 _THUMB_LOCK = threading.Lock()
+_PLACEHOLDER_LOCK = threading.Lock()
 
 
 @app.get("/favicon.ico")
@@ -214,40 +303,93 @@ def _placeholder_thumb(width: int):
     cache = THUMB_DIR / f"_placeholder_{width}.jpg"
     if cache.exists():
         return cache
-    try:
-        from PIL import Image, ImageDraw
+    # 页面首次打开时会有多张图并发请求占位图；加锁 + 原子写，避免 Windows 上写同一个文件失败
+    with _PLACEHOLDER_LOCK:
+        if cache.exists():
+            return cache
+        try:
+            from PIL import Image, ImageDraw
 
-        height = max(1, int(width * 9 / 16))
-        img = Image.new("RGB", (width, height), (20, 26, 38))
-        draw = ImageDraw.Draw(img)
-        for y in range(height):
-            ratio = y / max(1, height - 1)
-            draw.line(
-                [(0, y), (width, y)],
-                fill=(20 + int(18 * ratio), 26 + int(22 * ratio), 38 + int(30 * ratio)),
-            )
-        cx, cy = width // 2, height // 2
-        for radius, alpha in ((min(width, height) * 0.36, 70), (min(width, height) * 0.24, 90)):
-            draw.ellipse(
-                (cx - radius, cy - radius, cx + radius, cy + radius),
-                outline=(90, 130, 220),
-                width=max(1, width // 240),
-            )
-        dot = max(2, width // 90)
-        draw.ellipse((cx - dot, cy - dot, cx + dot, cy + dot), fill=(150, 190, 255))
-        THUMB_DIR.mkdir(parents=True, exist_ok=True)
-        img.save(cache, "JPEG", quality=82, optimize=True)
-        return cache
-    except Exception:
-        return None
+            height = max(1, int(width * 9 / 16))
+            img = Image.new("RGB", (width, height), (20, 26, 38))
+            draw = ImageDraw.Draw(img)
+            for y in range(height):
+                ratio = y / max(1, height - 1)
+                draw.line(
+                    [(0, y), (width, y)],
+                    fill=(20 + int(18 * ratio), 26 + int(22 * ratio), 38 + int(30 * ratio)),
+                )
+            cx, cy = width // 2, height // 2
+            for radius, alpha in ((min(width, height) * 0.36, 70), (min(width, height) * 0.24, 90)):
+                draw.ellipse(
+                    (cx - radius, cy - radius, cx + radius, cy + radius),
+                    outline=(90, 130, 220),
+                    width=max(1, width // 240),
+                )
+            dot = max(2, width // 90)
+            draw.ellipse((cx - dot, cy - dot, cx + dot, cy + dot), fill=(150, 190, 255))
+            THUMB_DIR.mkdir(parents=True, exist_ok=True)
+            tmp = cache.with_suffix(".tmp")
+            img.save(tmp, "JPEG", quality=82, optimize=True)
+            tmp.replace(cache)
+            return cache
+        except Exception as exc:
+            logger.warning("生成占位预览图失败（width=%s）: %s", width, exc)
+            return None
 
 
 def _avatar_url(owner: str) -> str:
     return f"https://github.com/{owner}.png?size=120"
 
 
+# 缩略图下载的资源限制：只接受图片类型，限制大小与像素，避免被恶意图片拖垮。
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
+MAX_IMAGE_PIXELS = 40_000_000
+ALLOWED_IMAGE_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")
+
+
+def _fetch_image_bytes(url: str, timeout: float = 12.0, max_bytes: int = MAX_IMAGE_BYTES) -> bytes:
+    """下载图片；每一跳重定向都重新做域名白名单校验（防 SSRF）。
+
+    只允许 https + GitHub 图片域名，拒绝私网 IP、非图片 Content-Type 和超大响应。
+    """
+    if not netguard.is_safe_image_url(url):
+        raise ValueError(f"不允许的图片地址: {url[:120]}")
+    sess = requests.Session()
+    sess.trust_env = False  # 本机代理会拖慢/卡住图片下载
+    try:
+        for _ in range(4):
+            resp = sess.get(url, timeout=timeout, allow_redirects=False, stream=True)
+            try:
+                if resp.is_redirect:
+                    location = resp.headers.get("Location") or ""
+                    url = urljoin(url, location)
+                    if not netguard.is_safe_image_url(url):
+                        raise ValueError(f"重定向到不允许的图片地址: {url[:120]}")
+                    continue
+                resp.raise_for_status()
+                content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                if content_type and content_type not in ALLOWED_IMAGE_TYPES:
+                    raise ValueError(f"不支持的图片类型: {content_type}")
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in resp.iter_content(64 * 1024):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise ValueError("图片超过大小上限")
+                    chunks.append(chunk)
+                return b"".join(chunks)
+            finally:
+                resp.close()
+        raise ValueError("图片重定向次数过多")
+    finally:
+        sess.close()
+
+
 def _generate_thumb(repo_id: int, width: int, og: str, owner: str) -> None:
-    """下载 GIF/PNG 预览图并压缩缓存（供后台线程与请求共用）。"""
+    """下载 GIF/PNG 预览图并压缩缓存（只应在后台线程里调用）。"""
     key = (repo_id, width)
     with _THUMB_LOCK:
         if key in _THUMB_PENDING:
@@ -259,29 +401,168 @@ def _generate_thumb(repo_id: int, width: int, og: str, owner: str) -> None:
             return
         import io
 
-        import requests as rq
         from PIL import Image
 
-        sess = rq.Session()
-        sess.trust_env = False  # 本机代理会拖慢/卡住图片下载
-        resp = sess.get(og, timeout=12)
-        resp.raise_for_status()
-        img = Image.open(io.BytesIO(resp.content)).convert("RGB")
-        ratio = width / float(img.width)
-        img = img.resize((width, max(1, int(img.height * ratio))), Image.LANCZOS)
+        if not _thumb_wait_slot():
+            return  # 429 冷却期内不下载，等前端下次轮询/下一次打开页面再试
+        with _THUMB_DOWNLOAD_LOCK:
+            data = _fetch_image_bytes(og, timeout=8.0)
+        img = Image.open(io.BytesIO(data))
+        if getattr(img, "format", None) not in ("JPEG", "PNG", "GIF", "WEBP"):
+            raise ValueError(f"不支持的图片格式: {img.format}")
+        if img.width * img.height > MAX_IMAGE_PIXELS:
+            raise ValueError(f"图片像素过大: {img.width}x{img.height}")
+        img = img.convert("RGB")
+        # 一次下载同时生成 240 / 480 / 960 三档（列表、日报、详情复用），减少 CDN 请求
         THUMB_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = cache.with_suffix(".tmp")
-        img.save(tmp, "JPEG", quality=80, optimize=True)
-        tmp.replace(cache)
-    except Exception:
-        pass
+        for out_width in sorted({width, *THUMB_STANDARD_WIDTHS}):
+            target = _thumb_path(repo_id, out_width)
+            if target.exists():
+                continue
+            ratio = out_width / float(img.width)
+            out = img.resize((out_width, max(1, int(img.height * ratio))), Image.LANCZOS)
+            tmp = target.with_suffix(".tmp")
+            out.save(tmp, "JPEG", quality=80, optimize=True)
+            tmp.replace(target)
+    except Exception as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status == 429:
+            _thumb_note_429(repo_id, width)
+            logger.debug("预览图下载被限流 repo=%s", repo_id)
+        else:
+            logger.warning("预览图生成失败 repo=%s: %s", repo_id, exc)
     finally:
         with _THUMB_LOCK:
             _THUMB_PENDING.discard(key)
 
 
-def _warm_thumbs(limit: int = 800, width: int = 240) -> None:
-    """后台预热：提前生成未读卡片的列表缩略图。"""
+# 按需生成缩略图的线程池：HTTP 请求只负责把任务排进来，绝不等待下载完成。
+# 实际远端下载由 _THUMB_DOWNLOAD_LOCK 串行化，多线程只是避免阻塞请求线程。
+THUMB_ON_DEMAND_WORKERS = 3
+_THUMB_EXECUTOR = ThreadPoolExecutor(
+    max_workers=THUMB_ON_DEMAND_WORKERS, thread_name_prefix="thumb-on-demand"
+)
+_THUMB_QUEUED: set[tuple[int, int]] = set()
+
+# 缩略图下载全局限速 + 429 处理：GitHub 图片 CDN 对**并发连接**很敏感（实测并发 3 个
+# 左右就会开始 429，顺序 1 个则稳定），因此所有下载串行执行；429 时单图退避，
+# 只有短时间大量 429 才触发全局冷却。
+THUMB_MIN_INTERVAL = 0.3          # 两次下载请求之间至少间隔多少秒（线程共享）
+THUMB_WARM_INTERVAL = 2.0         # 后台预热两次下载之间的最小间隔（给网页请求让路）
+THUMB_REPO_RETRY_SECONDS = 120.0  # 单个仓库 429 后的重试间隔
+THUMB_COOLDOWN_SECONDS = 30.0     # 连续大量 429 时的全局冷却
+THUMB_429_BURST_WINDOW = 60.0
+THUMB_429_BURST_LIMIT = 5
+# 一次下载后顺手生成这些常用宽度，避免列表(240)/日报(480)/详情(960)各下载一次
+THUMB_STANDARD_WIDTHS = (240, 480, 960)
+_THUMB_RATE_LOCK = threading.Lock()
+_THUMB_DOWNLOAD_LOCK = threading.Lock()  # 所有远端下载串行，避免并发触发 CDN 429
+_THUMB_NEXT_SLOT = 0.0
+_THUMB_COOLDOWN_UNTIL = 0.0
+_THUMB_429_TIMES: list[float] = []
+_THUMB_RETRY_AFTER: dict[tuple[int, int], float] = {}
+_THUMB_LAST_ON_DEMAND = 0.0
+
+
+def _thumb_cooling_down() -> bool:
+    with _THUMB_RATE_LOCK:
+        return time.time() < _THUMB_COOLDOWN_UNTIL
+
+
+def _thumb_retry_remaining(repo_id: int, width: int) -> float:
+    """单图 429 退避剩余秒数。"""
+    with _THUMB_RATE_LOCK:
+        return max(0.0, _THUMB_RETRY_AFTER.get((repo_id, width), 0.0) - time.time())
+
+
+def _thumb_recent_on_demand(window: float = 120.0) -> bool:
+    """最近是否有网页请求在等缩略图（有就暂停后台预热，别抢 CDN 配额）。"""
+    with _THUMB_RATE_LOCK:
+        return time.time() - _THUMB_LAST_ON_DEMAND < window
+
+
+def _thumb_mark_on_demand() -> None:
+    global _THUMB_LAST_ON_DEMAND
+    with _THUMB_RATE_LOCK:
+        _THUMB_LAST_ON_DEMAND = time.time()
+
+
+def _thumb_note_429(repo_id: int, width: int) -> None:
+    """单张图 429：只让这张图退避；短时间大量 429 才全局冷却一小会儿。"""
+    global _THUMB_COOLDOWN_UNTIL, _THUMB_429_TIMES
+    now = time.time()
+    with _THUMB_RATE_LOCK:
+        if len(_THUMB_RETRY_AFTER) > 5000:  # 防止长期运行字典无限增长
+            _THUMB_RETRY_AFTER.clear()
+        _THUMB_RETRY_AFTER[(repo_id, width)] = now + THUMB_REPO_RETRY_SECONDS
+        _THUMB_429_TIMES = [
+            t for t in _THUMB_429_TIMES if now - t <= THUMB_429_BURST_WINDOW
+        ]
+        _THUMB_429_TIMES.append(now)
+        if len(_THUMB_429_TIMES) >= THUMB_429_BURST_LIMIT and now >= _THUMB_COOLDOWN_UNTIL:
+            _THUMB_COOLDOWN_UNTIL = now + THUMB_COOLDOWN_SECONDS
+            logger.warning("图片 CDN 连续 429，暂停缩略图下载 %ss", int(THUMB_COOLDOWN_SECONDS))
+
+
+def _thumb_wait_slot() -> bool:
+    """线程共享的下载限速：预约一个时隙并等到它。冷却期内返回 False。"""
+    global _THUMB_NEXT_SLOT
+    now = time.time()
+    with _THUMB_RATE_LOCK:
+        if now < _THUMB_COOLDOWN_UNTIL:
+            return False
+        start = max(now, _THUMB_NEXT_SLOT)
+        _THUMB_NEXT_SLOT = start + THUMB_MIN_INTERVAL
+    wait = start - now
+    if wait > 0:
+        time.sleep(wait)
+    return True
+
+
+def _schedule_thumb(repo_id: int, width: int, og: str, owner: str) -> None:
+    """把缩略图生成排到后台线程池（同一张图去重，避免轮询重复入队）。"""
+    if not og or not netguard.is_safe_image_url(og):
+        return
+    _thumb_mark_on_demand()
+    if _thumb_cooling_down() or _thumb_retry_remaining(repo_id, width) > 0:
+        return
+    key = (repo_id, width)
+    with _THUMB_LOCK:
+        if key in _THUMB_QUEUED or _thumb_path(repo_id, width).exists():
+            return
+        _THUMB_QUEUED.add(key)
+
+    def _task() -> None:
+        try:
+            _generate_thumb(repo_id, width, og, owner)
+        finally:
+            with _THUMB_LOCK:
+                _THUMB_QUEUED.discard(key)
+
+    try:
+        _THUMB_EXECUTOR.submit(_task)
+    except (RuntimeError, ValueError) as exc:  # 解释器退出时线程池可能已关闭
+        with _THUMB_LOCK:
+            _THUMB_QUEUED.discard(key)
+        logger.debug("提交缩略图任务失败 repo=%s: %s", repo_id, exc)
+
+
+def _placeholder_reply(width: int):
+    """占位图响应：不让浏览器长缓存，后台生成后由前端带 `v=` 自动替换。"""
+    placeholder = _placeholder_thumb(width)
+    if not placeholder or not placeholder.exists():
+        return None
+    response = send_file(str(placeholder), mimetype="image/jpeg", max_age=0)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Thumb-State"] = "placeholder"
+    return response
+
+
+def _warm_thumbs(limit: int = 120, width: int = 240) -> None:
+    """后台预热：网页空闲时慢慢补未读卡片的列表缩略图，有网页请求时主动让路。"""
+    if _thumb_recent_on_demand():
+        logger.info("[thumbs] 最近有网页在加载缩略图，本轮预热跳过")
+        return
     try:
         conn = db.connect()
         db.init_db(conn)
@@ -295,29 +576,37 @@ def _warm_thumbs(limit: int = 800, width: int = 240) -> None:
         pending = [r for r in rows if not _thumb_path(r["id"], width).exists()]
         if not pending:
             return
-        from concurrent.futures import ThreadPoolExecutor
 
-        # 限速：2 并发 + 间隔提交，避免触发 GitHub 图片 CDN 的 429
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        # 1 个预热线程 + 更大间隔，不和用户当前页面的缩略图抢 CDN 配额
+        with ThreadPoolExecutor(max_workers=1) as pool:
             for row in pending:
+                if _thumb_cooling_down() or _thumb_recent_on_demand():
+                    logger.info("[thumbs] 暂停本轮预热（限流冷却或网页正在加载）")
+                    break
                 pool.submit(_generate_thumb, row["id"], width, row["og_image"], row["owner"])
-                time.sleep(0.45)
+                time.sleep(THUMB_WARM_INTERVAL)
     except Exception as exc:
         print(f"[thumbs] 预热失败: {exc}")
+        logger.warning("[thumbs] 预热失败: %s", exc)
 
 
 def _start_thumb_warmer() -> None:
     def _loop() -> None:
+        time.sleep(30)  # 启动先让网页首屏按需加载，避免预热抢先消耗 CDN 配额
         while True:
             _warm_thumbs()
-            time.sleep(300)
+            time.sleep(120 if _thumb_recent_on_demand(300) else 600)
 
     threading.Thread(target=_loop, daemon=True).start()
 
 
 @app.get("/thumb/<int:repo_id>")
 def thumb(repo_id: int):
-    """项目预览图：缓存命中直接返回；列表宽度未命中时先给头像、后台生成。"""
+    """项目预览图：缓存命中直接返回；未命中立即给占位图，后台生成后由前端自动替换。
+
+    关键点：这里绝不等待远端图片下载（GitHub 图片 CDN 慢/超时会让整页卡住），
+    只把任务排进后台线程池，HTTP 请求立刻返回占位图。
+    """
     try:
         width = max(160, min(int(request.args.get("w", 480)), 1200))
     except ValueError:
@@ -335,13 +624,50 @@ def thumb(repo_id: int):
     og = row["og_image"]
     owner = row["owner"] or ""
     if og:
-        _generate_thumb(repo_id, width, og, owner)
-        if cache.exists():
-            return send_file(str(cache), mimetype="image/jpeg", max_age=86400)
-    placeholder = _placeholder_thumb(width)
-    if placeholder and placeholder.exists():
-        return send_file(str(placeholder), mimetype="image/jpeg", max_age=120)
+        _schedule_thumb(repo_id, width, og, owner)
+    placeholder = _placeholder_reply(width)
+    if placeholder is not None:
+        return placeholder
     return redirect(_avatar_url(owner), code=302)
+
+
+@app.get("/api/thumbs/status")
+def api_thumbs_status():
+    """缩略图状态查询：返回已生成好的 id，未生成的顺手排入后台任务。
+
+    前端会用这个接口轮询，把占位图替换成真实预览图，用来实现「页面秒开、图片渐进加载」。
+    """
+    try:
+        width = max(160, min(int(request.args.get("w", 240)), 1200))
+    except ValueError:
+        width = 240
+    ids: list[int] = []
+    for part in (request.args.get("ids") or "").split(","):
+        part = part.strip()
+        if not part.isdigit():
+            continue
+        rid = int(part)
+        if rid not in ids:
+            ids.append(rid)
+        if len(ids) >= 120:
+            break
+    if not ids:
+        return jsonify({"ready": [], "width": width})
+    ready = [rid for rid in ids if _thumb_path(rid, width).exists()]
+    ready_set = set(ready)
+    missing = [rid for rid in ids if rid not in ready_set]
+    if missing:
+        conn = db.connect()
+        db.init_db(conn)
+        markers = ",".join("?" * len(missing))
+        rows = conn.execute(
+            f"SELECT id, og_image, owner FROM repos WHERE id IN ({markers})", missing
+        ).fetchall()
+        conn.close()
+        for row in rows:
+            if row["og_image"]:
+                _schedule_thumb(row["id"], width, row["og_image"], row["owner"] or "")
+    return jsonify({"ready": ready, "width": width})
 
 @app.get("/api/similar/<int:repo_id>")
 def api_similar(repo_id: int):
@@ -477,6 +803,7 @@ def _startup_catchup() -> None:
         collect.catchup_if_stale(max_age_hours=8.0)
     except Exception as exc:  # 后台线程不能把进程带崩
         print(f"[startup] 补跑异常: {exc}")
+        logger.warning("[startup] 补跑异常: %s", exc)
 
 
 def _port_in_use(host: str, port: int) -> bool:
@@ -488,6 +815,16 @@ def _port_in_use(host: str, port: int) -> bool:
 
 
 def main() -> None:
+    config.setup_logging()
+    if not _is_loopback(config.WEB_HOST):
+        print(
+            f"[安全] WEB_HOST={config.WEB_HOST}：非本机访问时，网页设置写入需要 WEB_ADMIN_TOKEN"
+        )
+        if not (config.WEB_ADMIN_TOKEN or "").strip():
+            print(
+                "[安全] 未配置 WEB_ADMIN_TOKEN：非本机访问时设置页只读（保存/测试接口返回 403）。"
+                "Docker 用户建议在宿主机 .env 配好后再启动。"
+            )
     if _port_in_use(config.WEB_HOST, config.WEB_PORT):
         print("服务已在运行，跳过启动")
         return

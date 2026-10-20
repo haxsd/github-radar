@@ -1,8 +1,9 @@
-﻿"""信息流：候选查询、个性化排序、标签组合筛选、榜单、收藏。"""
+"""信息流：候选查询、个性化排序、标签组合筛选、榜单、收藏。"""
 
 from __future__ import annotations
 
 import json
+import logging
 import math
 import threading
 import time
@@ -10,6 +11,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from . import db, taxonomy
+
+logger = logging.getLogger(__name__)
 
 # 兴趣反馈权重
 ACTION_WEIGHT = {"save": 2.0, "like": 1.5, "skip": -1.0}
@@ -200,8 +203,8 @@ def next_cards(
                     db.mark_seen(worker_conn, repo_id, "shown")
                 worker_conn.commit()
                 worker_conn.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("后台标记已读失败，下次请求会重试: %s", exc)
 
         threading.Thread(target=_mark_shown, daemon=True).start()
     return cards
@@ -259,6 +262,8 @@ def tag_groups() -> list[dict[str, Any]]:
 def stats() -> dict[str, Any]:
     conn = db.connect()
     db.init_db(conn)
+    last_success = db.meta_get(conn, "last_wave_at") or db.meta_get(conn, "last_seed_at")
+    error_at = db.meta_get(conn, "last_error_at") or ""
     out = {
         "repos": db.count_repos(conn),
         "events": db.count_events(conn),
@@ -266,8 +271,14 @@ def stats() -> dict[str, Any]:
         "tagged": conn.execute("SELECT COUNT(DISTINCT repo_id) n FROM repo_tags").fetchone()["n"],
         "saved": conn.execute("SELECT COUNT(*) n FROM saves").fetchone()["n"],
         "hidden": db.count_hidden(conn),
-        "last_wave_at": db.meta_get(conn, "last_wave_at") or db.meta_get(conn, "last_seed_at"),
+        "last_wave_at": last_success,
         "collecting": db.meta_get(conn, "collecting") == "1",
+        # 最近一次采集失败摘要（网页顶部红条 / 设置页采集状态卡）
+        "last_error": db.meta_get(conn, "last_error_message") or "",
+        "last_error_at": error_at,
+        "last_error_scope": db.meta_get(conn, "last_error_scope") or "",
+        # 失败时间晚于最近一次成功 = 还没被后续成功采集覆盖
+        "error_active": bool(error_at) and (not last_success or error_at > last_success),
     }
     conn.close()
     return out

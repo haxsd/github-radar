@@ -10,7 +10,7 @@ if not exist ".venv\Scripts\python.exe" (
 echo [1/2] building icon...
 ".venv\Scripts\python.exe" scripts\make_icon.py
 echo [2/2] packaging with PyInstaller...
-".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --windowed --name StarScout --icon "assets\icon.ico" --add-data "radar\templates;radar\templates" --add-data "radar\demo_data.json;radar" --add-data "assets\icon.png;assets" desktop.py
+".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --windowed --name StarScout --icon "assets\icon.ico" --add-data "radar\templates;radar\templates" --add-data "radar\static;radar\static" --add-data "radar\demo_data.json;radar" --add-data "assets\icon.png;assets" desktop.py
 echo.
 echo Done: dist\StarScout\StarScout.exe
 pause

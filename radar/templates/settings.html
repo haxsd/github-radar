@@ -1,46 +1,44 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}设置 · GitHub 中文雷达{% endblock %}
+{% from "_macros.html" import icon %}
 
 {% block style %}
-  .shead{padding:8px 0 20px;border-bottom:1px solid var(--stroke);margin-bottom:22px}
-  .shead h1{font-size:24px;margin:0 0 8px}
-  .shead p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.7}
-  .sgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:18px;align-items:start}
-  .scard{padding:20px 22px;border-radius:18px;border:1px solid var(--stroke);background:rgba(255,255,255,.025)}
-  .scard h2{font-size:15px;margin:0 0 4px;display:flex;align-items:center;gap:8px}
-  .scard .sub{font-size:12.5px;color:var(--muted);margin:0 0 16px;line-height:1.6}
-  .srow{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
-  .srow label{font-size:12.5px;color:var(--text-dim);font-weight:600}
-  .srow input,.srow select{width:100%;padding:9px 11px;border-radius:10px;border:1px solid var(--stroke-strong);
-    background:rgba(0,0,0,.28);color:var(--text);font-size:13px;font-family:var(--mono);outline:none}
-  .srow input:focus,.srow select:focus{border-color:rgba(130,170,255,.55);box-shadow:0 0 0 3px rgba(110,150,255,.12)}
-  .srow .hint{font-size:11.5px;color:var(--muted);line-height:1.6}
-  .statusline{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;flex-wrap:wrap}
-  .pill{font-size:11px;padding:2px 9px;border-radius:999px;border:1px solid var(--stroke-strong);color:var(--text-dim)}
-  .pill.ok{color:#8ff0b6;border-color:rgba(90,230,150,.3);background:rgba(90,230,150,.08)}
-  .pill.warn{color:#ffcf8a;border-color:rgba(255,190,90,.3);background:rgba(255,190,90,.08)}
-  .checks{display:flex;gap:18px;flex-wrap:wrap;margin:4px 0 14px;font-size:12.5px;color:var(--text-dim)}
-  .checks label{display:flex;align-items:center;gap:6px;cursor:pointer}
-  .sactions{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
-  .sactions .btn{padding:9px 18px}
-  .result{font-size:12.5px;margin-top:12px;min-height:18px;color:var(--muted);line-height:1.6}
-  .result.ok{color:#8ff0b6}
-  .result.err{color:#ff9c9c}
-  .foot{margin-top:22px;font-size:12px;color:var(--muted);line-height:1.9}
-  .foot code{font-family:var(--mono);font-size:11.5px;background:rgba(255,255,255,.06);
-    padding:1px 6px;border-radius:5px;color:var(--text-dim)}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
 {% endblock %}
 
 {% block content %}
-<div class="wrap" style="max-width:1100px">
+<div class="wrap" id="settingsRoot" data-providers='{{ providers|tojson }}' data-writable="{{ '1' if settings_writable else '0' }}">
   <div class="shead">
     <h1>设置</h1>
     <p>这个项目用你自己的 GitHub Token 和模型 API Key 运行，配置只保存在程序目录下的 <code>.env</code> 文件里，不会上传到任何服务器。</p>
   </div>
 
+  {% if settings_remote %}
+  <div class="remotehint {{ '' if settings_writable else 'blocked' }}">
+    <strong>你正在通过非本机地址访问。</strong>
+    {% if settings_writable %}
+    为防止局域网 / NAS 上其他人改走密钥，保存与测试设置需要管理口令（宿主机 <code>.env</code> 里的 <code>WEB_ADMIN_TOKEN</code>）。
+    <div class="srow">
+      <label for="adminToken">管理口令 WEB_ADMIN_TOKEN</label>
+      <div class="inputwrap">
+        <input id="adminToken" type="password" spellcheck="false" autocomplete="off" placeholder="输入管理口令后才能保存">
+        <button type="button" class="reveal" aria-label="显示或隐藏管理口令" aria-pressed="false"
+          onclick="togglePw('adminToken', this)">
+          {{ icon("eye") }}
+        </button>
+      </div>
+      <span class="hint">口令只用于本次请求（保存在浏览器 sessionStorage），不会写进服务端配置。</span>
+    </div>
+    {% else %}
+    当前服务未配置 <code>WEB_ADMIN_TOKEN</code>，所以「保存配置」与「测试」已禁用，避免远程改密钥。
+    请在本机打开设置页，或在宿主机 <code>.env</code> 设置 <code>WEB_ADMIN_TOKEN</code> 后重启服务。
+    {% endif %}
+  </div>
+  {% endif %}
+
   <div class="sgrid">
     <section class="scard">
-      <h2>① GitHub 访问</h2>
+      <h2><span class="num">1</span>GitHub 访问</h2>
       <p class="sub">需要一个 Personal Access Token（不需要任何权限勾选，public 仓库只读即可）。也可以先用 <code>gh auth login</code> 登录。</p>
       <div class="statusline">
         当前状态：
@@ -50,18 +48,24 @@
       </div>
       <div class="srow">
         <label for="ghToken">GITHUB_TOKEN</label>
-        <input id="ghToken" type="password" spellcheck="false" autocomplete="off"
-               placeholder="ghp_… 或 github_pat_…（留空则保持不变）">
+        <div class="inputwrap">
+          <input id="ghToken" type="password" spellcheck="false" autocomplete="off"
+                 placeholder="ghp_… 或 github_pat_…（留空则保持不变）">
+          <button type="button" class="reveal" aria-label="显示或隐藏 GITHUB_TOKEN" aria-pressed="false"
+            onclick="togglePw('ghToken', this)">
+            {{ icon("eye") }}
+          </button>
+        </div>
         <span class="hint">创建地址：GitHub → Settings → Developer settings → Personal access tokens</span>
       </div>
       <div class="sactions">
-        <button class="btn primary" onclick="testTarget('github')">测试连接</button>
+        <button type="button" class="btn primary" onclick="testTarget('github')" {{ 'disabled' if not settings_writable else '' }}>测试连接</button>
       </div>
       <div class="result" id="ghResult"></div>
     </section>
 
     <section class="scard">
-      <h2>② 模型服务（生成中文介绍）</h2>
+      <h2><span class="num">2</span>模型服务（生成中文介绍）</h2>
       <p class="sub">任意 OpenAI 兼容接口都能用：DeepSeek / OpenAI / 本地 Ollama / 自建网关。默认按 DeepSeek 配。</p>
       <div class="statusline">
         当前：
@@ -89,18 +93,48 @@
       </div>
       <div class="srow">
         <label for="apiKey">API Key</label>
-        <input id="apiKey" type="password" spellcheck="false" autocomplete="off"
-               placeholder="{{ '已配置，留空则保持不变' if has_llm_key else 'sk-…' }}">
+        <div class="inputwrap">
+          <input id="apiKey" type="password" spellcheck="false" autocomplete="off"
+                 placeholder="{{ '已配置，留空则保持不变' if has_llm_key else 'sk-…' }}">
+          <button type="button" class="reveal" aria-label="显示或隐藏 API Key" aria-pressed="false"
+            onclick="togglePw('apiKey', this)">
+            {{ icon("eye") }}
+          </button>
+        </div>
       </div>
       <div class="checks">
         <label><input type="checkbox" id="jsonMode" {{ 'checked' if current.json_mode else '' }}> JSON 模式（response_format）</label>
         <label><input type="checkbox" id="disableThinking" {{ 'checked' if current.disable_thinking else '' }}> 关闭思考模式（DeepSeek 建议开）</label>
       </div>
       <div class="sactions">
-        <button class="btn primary" onclick="saveSettings()">保存配置</button>
-        <button class="btn" onclick="testTarget('llm')">测试模型</button>
+        <button type="button" class="btn primary" id="saveBtn" onclick="saveSettings()" {{ 'disabled' if not settings_writable else '' }}>保存配置</button>
+        <button type="button" class="btn" onclick="testTarget('llm')" {{ 'disabled' if not settings_writable else '' }}>测试模型</button>
       </div>
+      <div class="savehint" id="saveHint" aria-live="polite"></div>
       <div class="result" id="llmResult"></div>
+    </section>
+
+    <section class="scard statuscard">
+      <h2><span class="num">3</span>采集状态</h2>
+      <p class="sub">最近一次采集失败的原因会显示在这里，首页顶部也会提示；完整日志在启动窗口的 stderr（后台脚本 / cron 会重定向到 <code>data/logs/</code>，Docker 用 <code>docker compose logs</code>）。</p>
+      <div class="statusgrid">
+        <span class="item">最近成功：
+          {% if stats.last_wave_at %}<span class="pill ok">{{ (stats.last_wave_at or '')[:16] | replace('T',' ') }}</span>
+          {% else %}<span class="pill warn">还没有成功采集过</span>{% endif %}
+        </span>
+        {% if stats.collecting %}<span class="item"><span class="status-dot busy"></span>采集中…</span>{% endif %}
+        <span class="item">仓库 <b class="mono">{{ stats.repos }}</b></span>
+      </div>
+      {% if stats.last_error %}
+      <div class="result {{ 'err' if stats.error_active else '' }}">
+        最近一次失败（{{ (stats.last_error_at or '')[:16] | replace('T',' ') }} · {{ stats.last_error_scope or 'collect' }}）：
+        {{ stats.last_error }}
+        {% if not stats.error_active %}<span class="muted">（后续采集已成功）</span>{% endif %}
+      </div>
+      {% else %}
+      <div class="result ok">最近没有采集失败记录。</div>
+      {% endif %}
+      {% if needs_setup %}<p class="hint">还没配 Key 时采集失败属于预期，先完成上面两步配置。</p>{% endif %}
     </section>
   </div>
 
@@ -112,58 +146,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-const PROVIDERS = {{ providers|tojson }};
-function $(id){ return document.getElementById(id); }
-
-function applyPreset(){
-  const p = $("provider").value;
-  const preset = PROVIDERS[p];
-  if(!preset) return;
-  if(preset.base_url) $("baseUrl").value = preset.base_url;
-  if(preset.model) $("model").value = preset.model;
-  $("jsonMode").checked = !!preset.json_mode;
-  $("disableThinking").checked = !!preset.disable_thinking;
-}
-
-async function saveSettings(){
-  const body = {
-    provider: $("provider").value,
-    base_url: $("baseUrl").value.trim(),
-    model: $("model").value.trim(),
-    json_mode: $("jsonMode").checked,
-    disable_thinking: $("disableThinking").checked,
-  };
-  const tok = $("ghToken").value.trim();
-  if(tok) body.github_token = tok;
-  const key = $("apiKey").value.trim();
-  if(key) body.api_key = key;
-  const box = $("llmResult");
-  box.className = "result"; box.textContent = "保存中…";
-  try{
-    const r = await fetch("/api/settings", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
-    const d = await r.json();
-    if(!d.ok) throw new Error(d.error || "保存失败");
-    box.className = "result ok";
-    box.textContent = `已保存：${d.provider} / ${d.model}（GitHub：${d.github_status}）`;
-    $("ghToken").value = ""; $("apiKey").value = "";
-    toast("配置已保存");
-  }catch(e){
-    box.className = "result err"; box.textContent = e.message;
-  }
-}
-
-async function testTarget(target){
-  const box = target === "github" ? $("ghResult") : $("llmResult");
-  box.className = "result"; box.textContent = "测试中…";
-  try{
-    const r = await fetch("/api/settings/test", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({target})});
-    const d = await r.json();
-    if(!d.ok) throw new Error(d.error || "测试失败");
-    box.className = "result ok"; box.textContent = d.message;
-  }catch(e){
-    box.className = "result err"; box.textContent = e.message;
-  }
-}
-</script>
+<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
 {% endblock %}

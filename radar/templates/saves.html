@@ -1,43 +1,29 @@
 {% extends "base.html" %}
 {% block title %}收藏 · GitHub 中文雷达{% endblock %}
+{% from "_macros.html" import icon, empty %}
 
 {% block style %}
-  .head{padding:10px 0 22px;border-bottom:1px solid var(--stroke);margin-bottom:24px}
-  .head h1{font-size:26px;margin:0 0 8px;letter-spacing:-.3px}
-  .head p{margin:0;color:var(--muted);font-size:13.5px}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:16px}
-  .scard{padding:20px 22px;border-radius:18px;display:flex;flex-direction:column;gap:10px;
-    transition:.18s;position:relative;overflow:hidden}
-  .scard:hover{transform:translateY(-3px);border-color:var(--stroke-strong)}
-  .scard .name{font-weight:700;font-size:16.5px;word-break:break-word}
-  .scard .name a:hover{color:#bcd3ff}
-  .scard .desc{font-size:13.5px;color:var(--text-dim);line-height:1.7}
-  .scard .tags{display:flex;gap:6px;flex-wrap:wrap}
-  .scard .t{font-size:11.5px;padding:2px 8px;border-radius:999px;border:1px solid var(--stroke-strong);color:var(--text-dim)}
-  .scard .note{background:rgba(255,255,255,.04);border-left:2px solid var(--accent);
-    padding:8px 12px;border-radius:8px;font-size:12.5px;color:var(--text-dim)}
-  .scard .foot{display:flex;justify-content:space-between;align-items:center;margin-top:auto;padding-top:12px;border-top:1px solid var(--stroke)}
-  .less{background:none;border:none;color:var(--muted);cursor:pointer;font-size:12.5px;padding:0}
-  .less:hover{color:var(--danger)}
-  .saved-at{font-size:11.5px;color:var(--muted);font-family:var(--mono)}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/saves.css') }}">
 {% endblock %}
 
 {% block content %}
 <div class="wrap">
   <div class="head">
-    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap">
+    <div class="head-row">
       <div>
-        <h1>收藏 <span class="muted" style="font-size:15px;font-weight:400">· {{ cards|length }} 个</span></h1>
+        <h1>收藏 <span class="count">· {{ cards|length }} 个</span></h1>
         <p>刷的时候按 <span class="kbd">S</span> 就会收到这里，方便以后回头用。</p>
       </div>
-      <a class="btn ghost" style="padding:7px 14px;font-size:13px;border-radius:10px"
-         href="/api/saves.md" download>导出 Markdown</a>
+      <a class="btn ghost sm" href="/api/saves.md" download>
+        {{ icon("download") }}
+        导出 Markdown
+      </a>
     </div>
   </div>
   {% if cards %}
   <div class="grid">
     {% for c in cards %}
-    <div class="scard glass">
+    <div class="scard glass" data-repo="{{ c.repo_id }}">
       <div class="name"><a href="{{ c.html_url }}" target="_blank" rel="noreferrer">{{ c.full_name }}</a></div>
       <div class="desc">{{ c.description_zh or c.description or '' }}</div>
       <div class="tags">
@@ -46,47 +32,33 @@
         {% for lb in (c.tag_labels or [])[1:4] %}<span class="t">{{ lb }}</span>{% endfor %}
       </div>
       {% if c.note %}<div class="note">{{ c.note }}</div>{% endif %}
+      <div class="note-edit" hidden>
+        <textarea maxlength="200" placeholder="写个备注，方便以后想起为什么收藏…">{{ c.note or '' }}</textarea>
+        <div class="note-actions">
+          <button type="button" class="btn primary sm" onclick="saveNote({{ c.repo_id }}, this)">保存备注</button>
+          <button type="button" class="btn ghost sm" onclick="cancelNote({{ c.repo_id }}, this)">取消</button>
+        </div>
+      </div>
       <div class="foot">
         <span class="saved-at">{{ (c.saved_at or '')[:16] | replace('T',' ') }}</span>
         <span style="display:flex;gap:14px">
-          <button class="less" onclick="editNote({{ c.repo_id }})">写备注</button>
-          <button class="less" onclick="unsave({{ c.repo_id }}, this)">取消收藏</button>
+          <button type="button" class="less" onclick="editNote({{ c.repo_id }}, this)">
+            {{ icon("edit") }}写备注
+          </button>
+          <button type="button" class="less danger" onclick="unsave({{ c.repo_id }}, this)">
+            {{ icon("trash") }}取消收藏
+          </button>
         </span>
       </div>
     </div>
     {% endfor %}
   </div>
   {% else %}
-  <div class="empty glass" style="border-radius:22px">
-    <div class="big">⭐</div>
-    <h2>还没有收藏</h2>
-    <p>回到 <a href="/" style="color:var(--accent)">信息流</a>，按 <span class="kbd">S</span> 收藏感兴趣的项目。</p>
-  </div>
+  {{ empty('还没有收藏', '回到信息流，按 S 收藏感兴趣的项目（快捷键提示见信息流帮助）。', 'bookmark', 'glass empty-block') }}
   {% endif %}
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script>
-async function editNote(repoId){
-  const note = prompt("给这个项目写个备注（留空则清除）：");
-  if(note === null) return;
-  try{
-    await fetch("/api/action",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({repo_id:repoId,action:"save",note:note.trim()})});
-    location.reload();
-  }catch(e){ alert("保存失败：" + e.message); }
-}
-async function unsave(repoId, btn){
-  try{
-    await fetch("/api/action",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({repo_id:repoId,action:"unsave"})});
-    const card = btn.closest(".scard");
-    card.style.transition = ".25s";
-    card.style.opacity = "0";
-    card.style.transform = "scale(.96)";
-    setTimeout(()=>card.remove(), 220);
-  }catch(e){ alert("取消失败：" + e.message); }
-}
-</script>
+<script src="{{ url_for('static', filename='js/saves.js') }}"></script>
 {% endblock %}

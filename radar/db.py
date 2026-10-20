@@ -1,4 +1,4 @@
-﻿"""SQLite 存储层：仓库 / 快照 / 事件 / 已读 / 收藏。"""
+"""SQLite 存储层：仓库 / 快照 / 事件 / 已读 / 收藏。"""
 
 from __future__ import annotations
 
@@ -99,6 +99,11 @@ CREATE INDEX IF NOT EXISTS idx_repo_tags_kind ON repo_tags(kind);
 
 def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def now_iso_ms() -> str:
+    """毫秒精度时间戳（用于失败时间等需要同秒内排序的字段）。"""
+    return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
 def connect() -> sqlite3.Connection:
