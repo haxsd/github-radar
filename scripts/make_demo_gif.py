@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
 
 from PIL import Image
@@ -10,7 +11,7 @@ from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "screenshots" / "demo.gif"
-URL = "http://127.0.0.1:8765"
+URL = os.environ.get("RADAR_DEMO_URL", "http://127.0.0.1:8765")
 FRAME_W = 1000
 FRAME_MS = 900
 
@@ -19,7 +20,11 @@ def main() -> None:
     shots: list[Image.Image] = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(args=["--hide-scrollbars"])
+        try:
+            # 本机装了 Edge 时直接复用（国内环境通常比临时下载 Chromium 稳定）
+            browser = p.chromium.launch(channel="msedge", args=["--hide-scrollbars"])
+        except Exception:
+            browser = p.chromium.launch(args=["--hide-scrollbars"])
         page = browser.new_page(viewport={"width": 1280, "height": 800}, device_scale_factor=1)
         page.goto(URL, wait_until="networkidle")
         page.wait_for_timeout(2200)
