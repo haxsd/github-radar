@@ -37,7 +37,7 @@
   </nav>
   <div class="topstats" aria-label="运行状态">
     <span title="采集状态"><span class="status-dot {{ 'busy' if stats.collecting else '' }}"></span>{{ '采集中…' if stats.collecting else '数据就绪' }}</span>
-    <span id="netState" class="netstate" title="网络状态：检测中"><span class="status-dot" id="netDot"></span><span id="netText">网络检测中…</span></span>
+    <a id="netState" class="netstate" href="/settings#network" title="网络状态：检测中，点击查看详情"><span class="status-dot" id="netDot"></span><span id="netText">网络检测中…</span></a>
     <span>仓库 <b>{{ stats.repos }}</b></span>
     <span class="stat-time muted" title="上次数据更新">{{ (stats.last_wave_at or '—')[:16] | replace('T',' ') }}</span>
   </div>
@@ -55,10 +55,6 @@
   <a href="/settings">查看详情</a>
 </div>
 {% endif %}
-<div class="netbar" id="netbar" hidden role="status">
-  <span id="netbarText"></span>
-  <a href="/settings#network">查看网络状态</a>
-</div>
 <main id="main">
 {% block content %}{% endblock %}
 </main>
