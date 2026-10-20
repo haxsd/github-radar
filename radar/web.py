@@ -118,7 +118,12 @@ def _needs_setup() -> bool:
 
 
 def _ctx(page: str) -> dict:
-    return {"page": page, "stats": feed.stats(), "needs_setup": _needs_setup()}
+    return {
+        "page": page,
+        "stats": feed.stats(),
+        "needs_setup": _needs_setup(),
+        "version": config.APP_VERSION,
+    }
 
 
 def _window_note(data: dict) -> str:

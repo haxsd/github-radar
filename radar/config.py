@@ -16,20 +16,56 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from . import __version__
+
 logger = logging.getLogger(__name__)
 
+APP_VERSION = __version__
 
-def _app_root() -> Path:
-    """源码运行用项目根目录；打包成 exe 后用 exe 所在目录（数据、.env 都放这里）。"""
+
+def _program_root() -> Path:
+    """源码运行用项目根目录；打包成 exe 后用 exe 所在目录（资源/入口）。"""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent.parent
 
 
-ROOT = _app_root()
-DATA_DIR = ROOT / "data"
+def _portable_mode(program_root: Path) -> bool:
+    """便携模式：数据放在 exe 旁边。RADAR_PORTABLE=1 或 exe 同目录 portable.flag。"""
+    if (os.environ.get("RADAR_PORTABLE") or "").strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    return (program_root / "portable.flag").exists()
+
+
+def _local_appdata() -> Path:
+    raw = (os.environ.get("LOCALAPPDATA") or "").strip()
+    if raw:
+        return Path(raw)
+    return Path.home() / "AppData" / "Local"
+
+
+def _default_data_dir(program_root: Path) -> Path:
+    """数据目录（.env / radar.db / thumbs / logs）。
+
+    - 源码运行：项目根目录（保持开发习惯）；
+    - 打包运行：%LOCALAPPDATA%\\GitHubRadar（安装到用户目录也能写）；
+    - 便携模式：exe 同目录；
+    - RADAR_DATA_DIR 可覆盖。
+    """
+    override = (os.environ.get("RADAR_DATA_DIR") or "").strip()
+    if override:
+        return Path(os.path.expandvars(os.path.expanduser(override)))
+    if not getattr(sys, "frozen", False):
+        return program_root
+    if _portable_mode(program_root):
+        return program_root
+    return _local_appdata() / "GitHubRadar"
+
+
+ROOT = _program_root()
+DATA_DIR = _default_data_dir(ROOT)
 DB_PATH = DATA_DIR / "radar.db"
-ENV_PATH = ROOT / ".env"
+ENV_PATH = DATA_DIR / ".env"
 
 # 常见 OpenAI 兼容服务的默认值（可在 .env / 设置页覆盖）
 PROVIDERS: dict[str, dict[str, object]] = {
@@ -155,13 +191,27 @@ def _load() -> None:
 
 
 def setup_logging(level: int = logging.INFO) -> None:
-    """入口统一日志格式；如果外部（gunicorn 等）已配置 handler 就尊重外部配置。"""
-    if logging.getLogger().handlers:
+    """入口统一日志格式；打包版额外写文件，避免窗口程序没有 stderr。"""
+    root = logging.getLogger()
+    if root.handlers:
         return
+    handlers: list[logging.Handler] = []
+    if sys.stderr is not None and not getattr(sys, "frozen", False):
+        handlers.append(logging.StreamHandler())
+    if getattr(sys, "frozen", False):
+        try:
+            log_dir = DATA_DIR / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            handlers.append(logging.FileHandler(log_dir / "app.log", encoding="utf-8"))
+        except OSError:
+            pass
+    if not handlers:
+        handlers.append(logging.NullHandler())
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=handlers,
     )
 
 
@@ -348,6 +398,7 @@ def save_env(values: dict[str, str]) -> None:
 
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / "logs").mkdir(parents=True, exist_ok=True)
 
 
 def assets_dir() -> Path:

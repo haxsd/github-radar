@@ -1,0 +1,42 @@
+GitHub 中文雷达 · 使用说明
+==========================
+
+一、启动
+  双击桌面「GitHub 中文雷达」快捷方式，或开始菜单里的同名程序。
+  程序会在托盘运行；关闭窗口不会退出，右键托盘图标可以：
+    - 打开界面
+    - 立即采集
+    - 打开数据目录
+    - 退出
+
+二、首次配置
+  1. 打开「设置」；
+  2. 填 GitHub Token（github.com/settings/tokens，public 只读即可）；
+  3. 填模型 API Key（默认 DeepSeek，也可用本地 Ollama）；
+  4. 点「保存配置」。
+
+三、数据在哪
+  安装版数据目录：%LOCALAPPDATA%\GitHubRadar
+    data\radar.db    数据库
+    data\thumbs\     预览图缓存
+    data\logs\       日志
+    .env             配置
+  从旧版绿色目录升级：把旧目录的 data 和 .env 放到数据目录，
+  或运行：StarScout.exe --import-data "旧目录路径"
+  便携版：在程序目录放一个空文件 portable.flag，数据会保存在程序目录。
+
+四、定时采集（可选）
+  安装时勾选「开机自动启动」，程序会在托盘后台运行；
+  也可以在「任务计划程序」里添加：
+    StarScout.exe --collect wave
+  采集日志：数据目录\data\logs\collect.log
+
+五、卸载
+  设置 → 应用 → GitHub 中文雷达 → 卸载。
+  卸载时会询问是否删除本地数据；选择「否」可保留数据库和缓存，以后重装继续用。
+
+六、代理 / 网络
+  国内网络下 GitHub 图片 CDN 可能较慢，可在「设置 → 网络状态」填写
+  RADAR_PROXY=http://127.0.0.1:7897（改成你自己的代理地址）。
+
+项目主页：https://github.com/haxsd/github-radar

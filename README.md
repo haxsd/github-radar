@@ -40,7 +40,32 @@
 ![榜单](docs/screenshots/rank.png)
 ![设置页](docs/screenshots/settings.png)
 
-## 快速开始
+## 安装（Windows）
+
+推荐从 [Releases](https://github.com/haxsd/github-radar/releases/latest) 下载：
+
+| 版本 | 适合 | 说明 |
+|---|---|---|
+| **安装版** `GitHubRadar-Setup-0.6.0.exe` | 普通用户 | 双击安装，**不需要管理员权限**；开始菜单/桌面快捷方式；托盘常驻；可在「设置 → 应用」卸载 |
+| **便携版** `StarScout-0.6.0-win64.zip` | 放 U 盘 / 不想安装 | 解压后双击 `StarScout.exe`；在程序目录放一个空文件 `portable.flag`，数据就会保存在程序目录 |
+
+安装版的数据默认放在：
+
+```
+%LOCALAPPDATA%\GitHubRadar\
+  data\radar.db、data\thumbs、data\logs\
+  .env
+```
+
+卸载时会询问是否删除本地数据；选「否」可保留数据库和预览图缓存。
+
+从旧版绿色目录迁移：把旧目录的 `data` 和 `.env` 复制到上面的数据目录，或运行：
+
+```bat
+StarScout.exe --import-data "旧目录路径"
+```
+
+## 快速开始（从源码运行）
 
 要求：Python 3.11+，一个 GitHub Token，一个 OpenAI 兼容的模型 API Key（默认 DeepSeek）。
 
@@ -76,22 +101,33 @@ python -m radar.collect wave      # 日常增量（新项目 + 更新 + 中文�
 
 再刷新网页就能刷了。
 
-## 桌面应用
+## 桌面应用 / 打包
 
-想当成本地应用用（双击打开、独立窗口、没有浏览器地址栏）：
+想当成本地应用用（独立窗口、没有浏览器地址栏）：
 
 ```bash
-python desktop.py            # 直接以应用窗口运行（Windows 用 Edge 应用模式）
+python desktop.py            # 源码运行：Edge 应用窗口 + 托盘
 ```
 
-或者打包成 exe（Windows，需要先 `pip install pyinstaller`）：
+Windows 打包（需要先 `pip install pyinstaller`，并且安装 Inno Setup 6/7 才能打安装包）：
 
 ```bat
-build_app.bat
-:: 产物：dist\StarScout\StarScout.exe
+build_app.bat                :: 产物：dist\StarScout\StarScout.exe
+build_installer.bat          :: 产物：dist\GitHubRadar-Setup-0.6.0.exe
 ```
 
-打包后的 exe 把数据、`.env` 放在 exe 同目录的 `data\`，可以整个文件夹拷走。第一次打开如果还没配 Key，首页会提示「载入示例数据」，也能先看到界面效果。
+打包后的程序：
+
+- 安装版：程序文件在 `%LOCALAPPDATA%\Programs\GitHubRadar`，数据在 `%LOCALAPPDATA%\GitHubRadar`；
+- 便携版：在 exe 同目录放 `portable.flag`，数据放程序目录；
+- 托盘菜单：打开界面 / 立即采集 / 打开数据目录 / 退出；
+- 关闭窗口不会退出，程序继续在托盘后台运行；
+- 无窗口采集（任务计划程序可用）：
+
+```bat
+StarScout.exe --collect wave
+StarScout.exe --collect thumbs --limit 300
+```
 
 ## Docker
 
@@ -148,7 +184,7 @@ python -m radar.collect update        # 只刷新已有仓库的 star / 提交�
 python -m radar.collect translate     # 补翻译（可加 --limit 500）
 python -m radar.collect tag           # 补标签
 python -m radar.collect thumbs        # 预下载预览图到本地缓存（可加 --limit 300）
-python -m radar.collect rewrite       # 重写老卡片
+```python -m radar.collect rewrite       # 重写老卡片
 python -m radar.collect clean         # 预览可疑仓库（--apply 才真正隐藏，--unhide 恢复）
 python -m radar.web                   # 启动网页
 ```
@@ -186,13 +222,15 @@ radar/
   network.py     网络连通性检测（GitHub / 图片 CDN / 模型接口）
   templates/     页面模板（_macros.html 为共享组件宏）
   static/        CSS / JS 静态资源（设计 token、组件与页面脚本）
-desktop.py       桌面应用入口（Edge 应用窗口）
+desktop.py       桌面入口（托盘 / Edge 应用窗口 / --collect 等 CLI）
+packaging/       PyInstaller spec、Inno Setup 安装脚本、版本信息、使用说明
 scripts/         图标生成、演示 GIF 生成等工具脚本
 assets/          应用图标
 tests/           行为测试（CI 运行：python -m unittest discover -s tests -v）
 data/            本地数据库、缓存（不提交）
 Dockerfile       容器镜像
 build_app.bat    打包 exe 脚本
+build_installer.bat 打 Windows 安装包脚本
 ```
 
 采集规则：**star > 50 且最近 3 个月有提交** 的仓库进入池子，采集窗口为近 90 天新建；更新事件展示 release / 涨星 / 提交等活动。
@@ -205,12 +243,15 @@ build_app.bat    打包 exe 脚本
 
 - **提示 GitHub 403 / 限流**：没配 token 时只有 60 次/小时，配置后 5000 次/小时。
 - **模型报错 401 / 404**：检查 Base URL 是否需要 `/v1`，模型名是否拼对；可以先点设置页「测试模型」。
-- **网页能打开但没有内容**：还没跑采集，或数据还在翻译中；看 `data/logs/` 下的日志。
+- **数据存在哪 / 怎么备份**：安装版在 `%LOCALAPPDATA%\GitHubRadar`（数据库、预览图、日志、`.env` 都在这里），直接复制整个目录即可备份；便携版数据在程序目录（有 `portable.flag` 时）。源码运行仍在项目根目录的 `data/` 与 `.env`。
+- **怎么卸载**：Windows「设置 → 应用 → GitHub 中文雷达 → 卸载」。卸载时可选择保留本地数据；静默卸载默认保留数据。
+- **网页能打开但没有内容**：还没跑采集，或数据还在翻译中；看数据目录下的 `logs/` 日志。
 - **预览图是本地缓存**：每个仓库第一次显示时会下载一次预览图，压缩成 240 / 480 / 960 三种尺寸存到 `data/thumbs/`，之后打开页面都直接读本地文件，不会重复联网。新收录卡片还没缓存时，可以用设置页「⑤ 预览图缓存 → 预下载未读卡片」，或运行 `python -m radar.collect thumbs --limit 300`；`collect_bg.bat` 也会在采集后自动补 150 张。缓存目录可以随时删除（会按需重新生成），不删会越用越快。
 - **预览图加载慢 / 一直是雷达占位图**：页面不会等图片下载——先显示占位图，真实预览图在后台生成后会自动替换（GitHub 图片 CDN 慢或超时也不会卡住页面）。如果长时间仍是占位图，多半是本机直连 GitHub 图片域名超时，检查网络/代理即可，不影响信息流使用。
 - **国内网络 / 需要代理**：GitHub API 通常可直连（可能较慢），但 GitHub 图片 CDN（`opengraph.githubassets.com`）在国内经常超时；DeepSeek、本地 Ollama 一般可直连。需要代理时在 `.env` 或设置页配置 `RADAR_PROXY=http://127.0.0.1:7897`（用于 GitHub API + 图片）；如果模型接口也需要代理，额外设置 `LLM_PROXY`。
 - **怎么知道网络是否可用**：首页顶栏有一个小网络指示灯（网络正常 / 网络受限 / 网络异常，悬停可看是哪个服务，点击进设置）；设置页「④ 网络状态」可查看 GitHub API、图片 CDN、模型接口各自的连通性与延迟，并点「重新检测」。
 - **公司网络 / 代理环境**：缩略图和模型调用默认直连（避免本机代理排队卡死）；GitHub API 未显式配置代理时会沿用系统 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量。
+- **安装时提示“Windows 已保护你的电脑”**：安装包目前没有代码签名，点「更多信息 → 仍要运行」即可；安装不需要管理员权限，装在当前用户目录。
 - **设置保存 403 / 设置页只读**：说明当前是从非本机地址访问，且没有配置 `WEB_ADMIN_TOKEN`。在 `.env` 里设置该口令并重启服务，或改回本机 `127.0.0.1` 操作。
 
 ## 数据与隐私
