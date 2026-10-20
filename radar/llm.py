@@ -72,6 +72,8 @@ def _chat_json(messages: list[dict[str, str]], max_tokens: int = 900) -> dict[st
     cfg = config.llm_config()
     if not cfg["chat_url"]:
         raise LLMError("模型地址未配置：请在网页「设置」里填写 Base URL")
+    # 默认直连（DeepSeek/Ollama 国内可直连）；配置 LLM_PROXY 时才走代理
+    _session.proxies = config.llm_proxies() or {}
     headers = {"Content-Type": "application/json", "Connection": "close"}
     if cfg["api_key"]:
         headers["Authorization"] = f"Bearer {cfg['api_key']}"

@@ -88,6 +88,12 @@ class TestMacrosAreWired(unittest.TestCase):
         self.assertIn("window.toast", js)
         self.assertIn("window.dialogFocus", js)
         self.assertIn("/api/thumbs/status", js)
+        self.assertIn("/api/network/status", js)
+
+    def test_settings_page_has_network_card(self):
+        html = (TEMPLATES / "settings.html").read_text(encoding="utf-8")
+        for marker in ('id="network"', 'id="net-github-pill"', 'id="radarProxy"'):
+            self.assertIn(marker, html, f"设置页缺少网络状态标记: {marker}")
 
 
 if __name__ == "__main__":

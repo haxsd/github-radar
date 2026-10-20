@@ -136,6 +136,42 @@
       {% endif %}
       {% if needs_setup %}<p class="hint">还没配 Key 时采集失败属于预期，先完成上面两步配置。</p>{% endif %}
     </section>
+
+    <section class="scard netcard" id="network">
+      <h2><span class="num">4</span>网络状态</h2>
+      <p class="sub">检测本机到 GitHub API、GitHub 图片 CDN 和模型接口的连通性。国内网络直连 GitHub 图片 CDN 常会超时，如有代理可在下面填写。</p>
+      <div class="netrows">
+        <div class="netrow">
+          <span class="netname">GitHub API</span>
+          <span class="pill" id="net-github-pill">检测中…</span>
+          <span class="netdetail" id="net-github-detail"></span>
+        </div>
+        <div class="netrow">
+          <span class="netname">图片 CDN</span>
+          <span class="pill" id="net-images-pill">检测中…</span>
+          <span class="netdetail" id="net-images-detail"></span>
+        </div>
+        <div class="netrow">
+          <span class="netname">模型接口</span>
+          <span class="pill" id="net-llm-pill">检测中…</span>
+          <span class="netdetail" id="net-llm-detail"></span>
+        </div>
+      </div>
+      <div class="netmeta">
+        <span id="netChecked">尚未检测</span>
+        <span id="netProxy">代理：—</span>
+      </div>
+      <div class="srow">
+        <label for="radarProxy">网络代理 RADAR_PROXY（可选）</label>
+        <input id="radarProxy" spellcheck="false" autocomplete="off"
+          placeholder="{{ ('已配置：' ~ radar_proxy_display ~ '，留空保持不变') if radar_proxy_configured else '例如 http://127.0.0.1:7897（留空 = 直连）' }}">
+        <span class="hint">用于 GitHub API 与缩略图 CDN；填 <code>direct</code> / <code>none</code> 可清除。模型接口默认直连，如需代理可在 <code>.env</code> 设置 <code>LLM_PROXY</code>。</span>
+      </div>
+      <div class="sactions">
+        <button type="button" class="btn sm" onclick="refreshNetwork(true)">重新检测</button>
+        <button type="button" class="btn primary sm" onclick="saveSettings()" {{ 'disabled' if not settings_writable else '' }}>保存代理配置</button>
+      </div>
+    </section>
   </div>
 
   <div class="foot">

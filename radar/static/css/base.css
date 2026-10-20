@@ -88,6 +88,9 @@ button{font:inherit}
 .status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;
   background:var(--success);box-shadow:0 0 0 4px rgba(53,208,127,.14)}
 .status-dot.busy{background:var(--warn);box-shadow:0 0 0 4px rgba(255,194,71,.16);animation:pulse 1.4s infinite}
+.status-dot.warn{background:var(--warn);box-shadow:0 0 0 4px rgba(255,194,71,.16)}
+.status-dot.bad{background:var(--danger);box-shadow:0 0 0 4px rgba(255,107,122,.16)}
+.netstate{display:inline-flex;align-items:center;gap:4px;cursor:help}
 @keyframes pulse{50%{opacity:.45}}
 .setupbar{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;
   padding:9px 16px;font-size:13px;color:#ffd9a8;
@@ -100,6 +103,11 @@ button{font:inherit}
   background:linear-gradient(90deg,rgba(255,107,122,.15),rgba(255,107,122,.04));
   border-bottom:1px solid rgba(255,107,122,.24)}
 .errbar a{color:#ffb3bb;text-decoration:underline;text-underline-offset:2px}
+.netbar{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;
+  padding:9px 16px;font-size:13px;color:#ffe0b3;
+  background:linear-gradient(90deg,rgba(255,170,80,.13),rgba(255,170,80,.04));
+  border-bottom:1px solid rgba(255,170,80,.22)}
+.netbar a{color:#ffc678;text-decoration:underline;text-underline-offset:2px}
 
 /* ---------- 布局 / 通用组件 ---------- */
 .wrap{width:100%;max-width:var(--page-w);margin:0 auto;padding:var(--sp-8) var(--gutter) var(--sp-10)}
@@ -114,6 +122,7 @@ button{font:inherit}
   background:rgba(255,255,255,.04)}
 .pill.ok{color:#8ff0b6;border-color:rgba(90,230,150,.28);background:rgba(90,230,150,.07)}
 .pill.warn{color:#ffcf8a;border-color:rgba(255,190,90,.28);background:rgba(255,190,90,.07)}
+.pill.bad{color:#ffb3bb;border-color:rgba(255,107,122,.3);background:rgba(255,107,122,.08)}
 .kbd{font-family:var(--mono);font-size:11px;background:rgba(255,255,255,.07);
   border:1px solid var(--stroke-strong);border-bottom-width:2px;border-radius:6px;
   padding:1px 6px;color:#c9d6e8;white-space:nowrap}

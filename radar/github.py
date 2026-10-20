@@ -22,6 +22,11 @@ class GitHub:
     def __init__(self, token: str | None = None) -> None:
         self.token = token or config.resolve_github_token()
         self.session = requests.Session()
+        # 显式配置的 RADAR_PROXY 优先；未配置时保持 requests 默认（沿用系统 HTTP(S)_PROXY 环境变量）
+        proxies = config.radar_proxies()
+        if proxies:
+            self.session.proxies.update(proxies)
+            self.session.trust_env = False
         self.session.headers.update(
             {
                 "Authorization": f"Bearer {self.token}",

@@ -84,6 +84,11 @@ WEB_HOST: str = "127.0.0.1"
 WEB_PORT: int = 8765
 # 非本机访问时修改设置/测试连接所需的管理口令；留空 = 禁止远程改设置
 WEB_ADMIN_TOKEN: str = ""
+# 显式代理（可选）：
+# RADAR_PROXY 用于 GitHub API 与缩略图 CDN；LLM_PROXY 用于模型接口。
+# 留空时：GitHub API 沿用系统 HTTP(S)_PROXY 环境变量，缩略图/模型接口直连。
+RADAR_PROXY: str = ""
+LLM_PROXY: str = ""
 
 # 由 _load 管理的键：真实环境变量优先级高于 .env，同时 .env 改动后能热加载
 _MANAGED_ENV = (
@@ -102,6 +107,8 @@ _MANAGED_ENV = (
     "WEB_HOST",
     "WEB_PORT",
     "WEB_ADMIN_TOKEN",
+    "RADAR_PROXY",
+    "LLM_PROXY",
 )
 _TRUE_ENV = {key: os.environ[key] for key in _MANAGED_ENV if key in os.environ}
 
@@ -109,6 +116,7 @@ _TRUE_ENV = {key: os.environ[key] for key in _MANAGED_ENV if key in os.environ}
 def _load() -> None:
     global GITHUB_TOKEN, GH_CLI_PATH, LLM_PROVIDER, LLM_BASE_URL, LLM_API_KEY
     global LLM_MODEL, LLM_JSON_MODE, LLM_DISABLE_THINKING, WEB_HOST, WEB_PORT, WEB_ADMIN_TOKEN
+    global RADAR_PROXY, LLM_PROXY
 
     # 重置托管键 -> 读取 .env -> 再把真实环境变量覆盖回去
     for key in _MANAGED_ENV:
@@ -142,6 +150,8 @@ def _load() -> None:
     except ValueError:
         WEB_PORT = 8765
     WEB_ADMIN_TOKEN = _env("WEB_ADMIN_TOKEN")
+    RADAR_PROXY = _env("RADAR_PROXY")
+    LLM_PROXY = _env("LLM_PROXY")
 
 
 def setup_logging(level: int = logging.INFO) -> None:
@@ -240,7 +250,62 @@ MANAGED_KEYS = (
     "LLM_API_KEY",
     "LLM_JSON_MODE",
     "LLM_DISABLE_THINKING",
+    "RADAR_PROXY",
+    "LLM_PROXY",
 )
+
+
+def _normalize_proxy(raw: str) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    if "://" not in value:
+        value = "http://" + value
+    return value
+
+
+def _proxy_dict(raw: str) -> dict[str, str] | None:
+    value = _normalize_proxy(raw)
+    if not value:
+        return None
+    return {"http": value, "https": value}
+
+
+def radar_proxies() -> dict[str, str] | None:
+    """GitHub API / 缩略图 CDN 使用的显式代理；未配置时返回 None。"""
+    return _proxy_dict(RADAR_PROXY)
+
+
+def llm_proxies() -> dict[str, str] | None:
+    """模型接口使用的显式代理；未配置时返回 None（保持直连）。"""
+    return _proxy_dict(LLM_PROXY)
+
+
+def mask_proxy(raw: str) -> str:
+    """展示用代理地址：隐藏账号密码，只保留 scheme://host:port。"""
+    value = _normalize_proxy(raw)
+    if not value:
+        return ""
+    try:
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(value)
+        host = parts.hostname or ""
+        if not host:
+            return value[:60]
+        port = f":{parts.port}" if parts.port else ""
+        return f"{parts.scheme or 'http'}://{host}{port}"
+    except Exception:
+        return value[:60]
+
+
+def system_proxy_summary() -> str:
+    """系统/环境中是否设置了代理（供网络状态页展示，不暴露账号密码）。"""
+    for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        value = (os.getenv(key) or "").strip()
+        if value:
+            return f"{key}={mask_proxy(value)}"
+    return ""
 
 
 def _clean_env_value(value: object) -> str:

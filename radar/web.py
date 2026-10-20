@@ -13,7 +13,7 @@ from urllib.parse import urljoin
 import requests
 from flask import Flask, jsonify, redirect, render_template, request, send_file
 
-from . import collect, config, db, feed, llm, netguard
+from . import collect, config, db, feed, llm, netguard, network
 
 app = Flask(__name__, template_folder="templates")
 logger = logging.getLogger(__name__)
@@ -194,6 +194,8 @@ def settings_page():
         web_port=config.WEB_PORT,
         settings_remote=remote_client,
         settings_writable=settings_writable,
+        radar_proxy_configured=bool(config.RADAR_PROXY),
+        radar_proxy_display=config.mask_proxy(config.RADAR_PROXY),
     )
 
 
@@ -212,10 +214,23 @@ def api_settings_save():
     base_url = str(data.get("base_url") or "").strip() or str(preset["base_url"] or "")
     model = str(data.get("model") or "").strip() or str(preset["model"] or "")
     api_key = str(data.get("api_key") or "").strip()
+    proxy_raw = str(data.get("proxy") or "").strip()
+    if proxy_raw.lower() in ("direct", "none", "off", "no"):
+        proxy_raw = ""  # 显式直连 / 清除代理
     if _has_newline(
-        {"github_token": token, "base_url": base_url, "model": model, "api_key": api_key}
+        {
+            "github_token": token,
+            "base_url": base_url,
+            "model": model,
+            "api_key": api_key,
+            "proxy": proxy_raw,
+        }
     ):
         return jsonify({"ok": False, "error": "配置值不能包含换行符"}), 400
+    if proxy_raw:
+        values["RADAR_PROXY"] = proxy_raw
+    elif "proxy" in data:
+        values["RADAR_PROXY"] = ""
     if token:
         values["GITHUB_TOKEN"] = token
     values["LLM_PROVIDER"] = provider
@@ -257,6 +272,7 @@ def api_settings_test():
                     "Accept": "application/vnd.github+json",
                     "Connection": "close",
                 },
+                proxies=config.radar_proxies(),
                 timeout=20,
             )
             if resp.status_code == 401:
@@ -356,7 +372,10 @@ def _fetch_image_bytes(url: str, timeout: float = 12.0, max_bytes: int = MAX_IMA
     if not netguard.is_safe_image_url(url):
         raise ValueError(f"不允许的图片地址: {url[:120]}")
     sess = requests.Session()
-    sess.trust_env = False  # 本机代理会拖慢/卡住图片下载
+    sess.trust_env = False  # 默认绕过系统代理；代理由 RADAR_PROXY 显式配置
+    proxies = config.radar_proxies()
+    if proxies:
+        sess.proxies.update(proxies)
     try:
         for _ in range(4):
             resp = sess.get(url, timeout=timeout, allow_redirects=False, stream=True)
@@ -774,6 +793,29 @@ def api_demo_load():
 @app.get("/api/stats")
 def api_stats():
     return jsonify(feed.stats())
+
+
+@app.get("/api/network/status")
+def api_network_status():
+    """网络连通性（GitHub API / 图片 CDN / 模型接口），默认缓存 5 分钟。"""
+    force = request.args.get("refresh") == "1"
+    try:
+        return jsonify(network.check_all(force=force))
+    except Exception as exc:  # 网络检测自身不能 500
+        logger.warning("网络状态检测失败: %s", exc)
+        return (
+            jsonify(
+                {
+                    "checked_at": "",
+                    "level": "unknown",
+                    "cached": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "targets": {},
+                    "proxy": {"radar": "—", "llm": "—", "system": "—"},
+                }
+            ),
+            200,
+        )
 
 
 @app.get("/api/rank")

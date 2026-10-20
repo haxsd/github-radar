@@ -78,6 +78,8 @@ async function saveSettings(){
   if(tok) body.github_token = tok;
   const key = $("apiKey").value.trim();
   if(key) body.api_key = key;
+  const proxyEl = $("radarProxy");
+  if(proxyEl && proxyEl.value.trim()) body.proxy = proxyEl.value.trim();
   Object.assign(body, adminPayload());
   box.className = "result"; box.textContent = "保存中…";
   try{
@@ -87,8 +89,10 @@ async function saveSettings(){
     box.className = "result ok";
     box.textContent = `已保存：${d.provider} / ${d.model}（GitHub：${d.github_status}）`;
     $("ghToken").value = ""; $("apiKey").value = "";
+    if(proxyEl) proxyEl.value = "";
     rememberAdminToken();
     clearDirty();
+    refreshNetwork(true);
     window.toast("配置已保存");
   }catch(e){
     box.className = "result err"; box.textContent = e.message;
@@ -109,6 +113,66 @@ async function testTarget(target){
     box.className = "result err"; box.textContent = e.message;
   }
 }
+
+// ---------- 网络状态 ----------
+const NET_LABELS = { github: "GitHub API", images: "图片 CDN", llm: "模型接口" };
+
+function renderNetwork(data) {
+  Object.keys(NET_LABELS).forEach(function (key) {
+    const t = (data.targets || {})[key];
+    const pill = $("net-" + key + "-pill");
+    const detail = $("net-" + key + "-detail");
+    if (!pill || !detail) return;
+    pill.className = "pill";
+    if (!t) {
+      pill.textContent = "未知";
+      pill.classList.add("warn");
+      detail.textContent = "";
+      return;
+    }
+    if (t.configured === false) {
+      pill.textContent = "未配置";
+      pill.classList.add("warn");
+      detail.textContent = [t.message, t.hint].filter(Boolean).join("；");
+      return;
+    }
+    if (t.ok && !t.warning) {
+      pill.textContent = "正常 · " + (t.latency_ms || 0) + "ms";
+      pill.classList.add("ok");
+    } else if (t.ok && t.warning) {
+      pill.textContent = "受限 · " + (t.latency_ms || 0) + "ms";
+      pill.classList.add("warn");
+    } else {
+      pill.textContent = "不可达";
+      pill.classList.add("bad");
+    }
+    detail.textContent = [t.message, t.hint].filter(Boolean).join("；");
+  });
+  const checked = $("netChecked");
+  if (checked) {
+    const ts = (data.checked_at || "").replace("T", " ").slice(0, 19);
+    checked.textContent = ts ? ("检测于 " + ts + (data.cached ? "（缓存）" : "")) : "尚未检测";
+  }
+  const proxy = $("netProxy");
+  if (proxy && data.proxy) {
+    proxy.textContent = "代理：GitHub/图片 " + data.proxy.radar
+      + " · 模型 " + data.proxy.llm + " · 系统 " + data.proxy.system;
+  }
+}
+
+async function refreshNetwork(force) {
+  const checked = $("netChecked");
+  if (checked && force) checked.textContent = "检测中…";
+  try {
+    const r = await fetch("/api/network/status" + (force ? "?refresh=1" : ""));
+    const d = await r.json();
+    renderNetwork(d);
+    if (force) window.toast("网络检测完成");
+  } catch (e) {
+    if (checked) checked.textContent = "网络检测失败：" + e.message;
+  }
+}
+refreshNetwork(false);
 
 (function initAdminToken(){
   const el = $("adminToken");

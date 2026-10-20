@@ -111,3 +111,63 @@ window.refreshThumbs = refreshThumbs;
 setInterval(refreshThumbs, POLL_MS);
 window.addEventListener("load", function () { setTimeout(refreshThumbs, 700); });
 })();
+
+// ---------- 网络状态：顶栏指示 + 失败提示条 ----------
+(function () {
+  "use strict";
+  var LABELS = { github: "GitHub API", images: "图片 CDN", llm: "模型接口" };
+
+  function apply(data) {
+    var level = (data && data.level) || "unknown";
+    var dot = document.getElementById("netDot");
+    var text = document.getElementById("netText");
+    var bar = document.getElementById("netbar");
+    var barText = document.getElementById("netbarText");
+    if (dot) dot.classList.remove("busy", "warn", "bad");
+    var label = "网络状态未知";
+    if (level === "ok") label = "网络正常";
+    else if (level === "degraded") { label = "网络受限"; if (dot) dot.classList.add("warn"); }
+    else if (level === "offline") { label = "网络异常"; if (dot) dot.classList.add("bad"); }
+    if (text) text.textContent = label;
+    var netState = document.getElementById("netState");
+    if (netState && data && data.proxy) {
+      netState.title = "网络：" + label
+        + " ｜ GitHub/图片代理：" + data.proxy.radar
+        + " ｜ 模型代理：" + data.proxy.llm;
+    }
+    var failures = [];
+    var targets = (data && data.targets) || {};
+    Object.keys(LABELS).forEach(function (key) {
+      var t = targets[key];
+      if (!t || t.configured === false) return;
+      if (!t.ok) failures.push(LABELS[key] + " 不可达");
+      else if (t.warning) failures.push(LABELS[key] + " 受限");
+    });
+    if (!bar || !barText) return;
+    if (level === "ok" || level === "unknown") {
+      bar.hidden = true;
+      barText.textContent = "";
+      return;
+    }
+    bar.hidden = false;
+    var msg = (level === "offline" ? "网络异常：" : "网络受限：")
+      + (failures.join("、") || "部分服务不可达");
+    if (targets.images && !targets.images.ok) msg += "（预览图先显示占位图）";
+    msg += "，国内网络可在设置里配置代理。";
+    barText.textContent = msg;
+  }
+
+  async function refresh() {
+    try {
+      var resp = await fetch("/api/network/status", { cache: "no-store" });
+      if (!resp.ok) return;
+      apply(await resp.json());
+    } catch (e) {
+      // 网络检测失败时保持原有显示
+    }
+  }
+
+  window.refreshNetworkStatus = refresh;
+  setTimeout(refresh, 1500);
+  setInterval(refresh, 300000);
+})();

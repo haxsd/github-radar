@@ -50,9 +50,21 @@
 .statuscard{grid-column:1 / -1}
 .statuscard .result{margin-top:8px;min-height:auto;background:rgba(0,0,0,.2);
   border:1px solid var(--stroke);border-radius:var(--r-sm);padding:9px 12px}
+.netcard{grid-column:1 / -1}
+.netrows{display:flex;flex-direction:column;gap:8px;margin:4px 0 14px}
+.netrow{display:grid;grid-template-columns:110px auto minmax(0,1fr);gap:12px;align-items:center;
+  padding:10px 12px;border:1px solid var(--stroke);border-radius:var(--r-sm);background:rgba(0,0,0,.18)}
+.netname{font-size:13px;color:var(--text-dim);font-weight:600}
+.netdetail{font-size:12px;color:var(--muted);line-height:1.55;min-width:0}
+.netmeta{display:flex;gap:18px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin-bottom:14px}
 @media (max-width:960px){
   .sgrid{grid-template-columns:1fr}
   .statuscard{grid-column:auto}
+  .netcard{grid-column:auto}
+}
+@media (max-width:700px){
+  .netrow{grid-template-columns:1fr auto;gap:8px}
+  .netdetail{grid-column:1 / -1}
 }
 @media (max-width:600px){
   .shead{padding:0 0 16px;margin-bottom:16px}
