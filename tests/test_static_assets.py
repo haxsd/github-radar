@@ -108,6 +108,14 @@ class TestMacrosAreWired(unittest.TestCase):
         self.assertIn("body.api_key", js)
         self.assertIn("cfg_override", Path(web.__file__).read_text(encoding="utf-8"))
 
+    def test_settings_page_has_update_card(self):
+        html = (TEMPLATES / "settings.html").read_text(encoding="utf-8")
+        for marker in ('id="update"', 'id="updateCheckBtn"', 'id="updateDownload"'):
+            self.assertIn(marker, html, f"设置页缺少更新卡片标记: {marker}")
+        js = (STATIC / "js" / "settings.js").read_text(encoding="utf-8")
+        self.assertIn("function checkUpdate", js)
+        self.assertIn("/api/update/check", js)
+
 
 if __name__ == "__main__":
     unittest.main()

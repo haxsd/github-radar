@@ -15,7 +15,7 @@ from urllib.parse import urljoin
 import requests
 from flask import Flask, jsonify, redirect, render_template, request, send_file
 
-from . import collect, config, db, feed, llm, netguard, network
+from . import collect, config, db, feed, llm, netguard, network, update
 
 app = Flask(__name__, template_folder="templates")
 app.json.ensure_ascii = False  # 中文直接以 UTF-8 输出，少约一半转义字符
@@ -1044,6 +1044,21 @@ def api_demo_load():
 @app.get("/api/stats")
 def api_stats():
     return jsonify(feed.stats())
+
+
+@app.get("/api/update/check")
+def api_update_check():
+    """检查 GitHub 最新 Release；结果缓存 6 小时，refresh=1 强制刷新。"""
+    try:
+        result = update.check_latest(force=request.args.get("refresh") == "1")
+    except Exception as exc:  # 检查更新失败不能影响设置页
+        logger.warning("检查更新失败: %s", exc)
+        result = {
+            "ok": False,
+            "current": config.APP_VERSION,
+            "error": "检查更新失败：%s" % exc,
+        }
+    return jsonify(result)
 
 
 @app.get("/api/network/status")

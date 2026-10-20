@@ -7,7 +7,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="wrap settings-page" id="settingsRoot" data-providers='{{ providers|tojson }}' data-writable="{{ '1' if settings_writable else '0' }}">
+<div class="wrap settings-page" id="settingsRoot" data-providers='{{ providers|tojson }}' data-writable="{{ '1' if settings_writable else '0' }}" data-version="{{ version }}">
 
   <header class="set-hero">
     <div class="set-hero-main">
@@ -304,11 +304,31 @@
         {% if needs_setup %}<p class="hint">还没配 Key 时采集失败属于预期，先完成上面的 GitHub 与 AI 配置。</p>{% endif %}
       </div>
     </details>
+
+    <details class="adv" id="update">
+      <summary>
+        <span class="picon small">{{ icon("download") }}</span>
+        <span class="advtitle"><b>版本与更新</b><small>检查 GitHub 最新 Release</small></span>
+        <span class="advmeta" id="updateBadge">v{{ version }}</span>
+        {{ icon("chevron", "chev") }}
+      </summary>
+      <div class="advbody">
+        <div class="statusgrid">
+          <span class="item">当前版本 <b class="mono">v{{ version }}</b></span>
+          <span class="item" id="updateState">尚未检查</span>
+        </div>
+        <div class="adv-actions">
+          <button type="button" class="btn sm" id="updateCheckBtn" onclick="checkUpdate(true, true)">检查更新</button>
+          <a class="btn primary sm" id="updateDownload" href="https://github.com/haxsd/github-radar/releases/latest" target="_blank" rel="noreferrer" style="display:none">去下载</a>
+        </div>
+        <div class="hint" id="updateHint">检查只读取 GitHub Releases，不会自动下载或安装。</div>
+      </div>
+    </details>
   </div>
 
   <div class="foot">
     保存后立即生效（无需重启）。配置保存在本地 <code>.env</code> 中，环境变量优先级更高。
-    <br><span class="muted">GitHub 中文雷达 v{{ version }}</span>
+    <br><span class="muted">GitHub 中文雷达 <a href="#update">v{{ version }}</a></span>
     {% if needs_setup %}<br>配置好后回到 <a href="/">信息流</a> 即可开始。{% endif %}
   </div>
 

@@ -1,8 +1,8 @@
 # UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(0, 7, 0, 0),
-    prodvers=(0, 7, 0, 0),
+    filevers=(0, 7, 1, 0),
+    prodvers=(0, 7, 1, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -17,12 +17,12 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'GitHub Radar contributors'),
           StringStruct('FileDescription', 'GitHub 中文雷达'),
-          StringStruct('FileVersion', '0.7.0'),
+          StringStruct('FileVersion', '0.7.1'),
           StringStruct('InternalName', 'StarScout'),
           StringStruct('LegalCopyright', 'MIT License'),
           StringStruct('OriginalFilename', 'StarScout.exe'),
           StringStruct('ProductName', 'GitHub 中文雷达'),
-          StringStruct('ProductVersion', '0.7.0')
+          StringStruct('ProductVersion', '0.7.1')
         ]
       )
     ]),

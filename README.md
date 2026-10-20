@@ -13,13 +13,14 @@
 - **日报与榜单**：过去 24 小时精选，周飙升 / 月飙升 / 新收录 / 总星榜
 - **收藏与历史**：收藏可写备注、导出 Markdown；跳过后悔可以放回信息流
 - **口味反馈**：收藏 / 感兴趣 / 跳过会调整标签权重，越刷越合口味
+- **检查更新**：设置页检查 GitHub 最新 Release，有新版本时直达下载页
 - **纯本地**：SQLite 存储、无遥测；模型可配 DeepSeek / OpenAI / 本地 Ollama 等任意 OpenAI 兼容接口
 
 ## 下载安装（Windows）
 
 从 [Releases](https://github.com/haxsd/github-radar/releases/latest) 下载唯一安装包：
 
-- `GitHubRadar-Setup-0.7.0.exe`：双击安装，不需要管理员权限；带开始菜单 / 桌面快捷方式、系统托盘，可在「设置 → 应用」卸载。
+- `GitHubRadar-Setup-0.7.1.exe`：双击安装，不需要管理员权限；带开始菜单 / 桌面快捷方式、系统托盘，可在「设置 → 应用」卸载。
 - 数据默认保存在 `%LOCALAPPDATA%\GitHubRadar\`（数据库、预览图缓存、日志、`.env`）。
 - 从旧版绿色目录迁移：运行 `StarScout.exe --import-data "旧目录路径"`，或把旧目录的 `data\` 与 `.env` 复制到上面的数据目录。
 

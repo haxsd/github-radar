@@ -13,13 +13,14 @@
 - **Daily digest & rankings**: best of the last 24 hours, weekly / monthly star gains, newly indexed and all-time star charts
 - **Favorites & history**: write notes on favorites and export them as Markdown; skipped repos can be put back into the feed
 - **Taste feedback**: favorite / interested / skip adjust tag weights, so the feed gets closer to your taste
+- **Update check**: the settings page checks the latest GitHub Release and links to the download page
 - **Fully local**: SQLite storage, no telemetry; works with DeepSeek, OpenAI, local Ollama or any OpenAI-compatible endpoint
 
 ## Download & install (Windows)
 
 Download the single installer from [Releases](https://github.com/haxsd/github-radar/releases/latest):
 
-- `GitHubRadar-Setup-0.7.0.exe`: double-click to install, no admin rights required; Start menu / desktop shortcuts and a system tray icon; uninstall via Settings → Apps.
+- `GitHubRadar-Setup-0.7.1.exe`: double-click to install, no admin rights required; Start menu / desktop shortcuts and a system tray icon; uninstall via Settings → Apps.
 - Data is stored under `%LOCALAPPDATA%\GitHubRadar\` (database, thumbnail cache, logs, `.env`).
 - Migrating from an older portable folder: run `StarScout.exe --import-data "old-folder-path"`, or copy the old `data\` and `.env` into that data folder.
 

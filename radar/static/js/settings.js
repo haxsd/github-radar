@@ -291,7 +291,52 @@ async function prefetchThumbs() {
   }
 }
 
+async function checkUpdate(force, interactive) {
+  const state = $("updateState");
+  const badge = $("updateBadge");
+  const hint = $("updateHint");
+  const btn = $("updateCheckBtn");
+  const download = $("updateDownload");
+  if (!state) return;
+  const current = (root && root.dataset.version) || "";
+  if (btn) { btn.disabled = true; btn.textContent = "检查中…"; }
+  state.textContent = "检查中…";
+  try {
+    const r = await fetch("/api/update/check" + (force ? "?refresh=1" : ""), { cache: "no-store" });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || "检查更新失败");
+    if (d.has_update) {
+      state.textContent = "发现新版本 v" + d.latest;
+      if (badge) { badge.textContent = "v" + d.latest; badge.className = "advmeta warn"; }
+      const published = (d.published_at || "").slice(0, 10);
+      hint.textContent = "当前 v" + current + "，最新版本 v" + d.latest
+        + (published ? "（发布于 " + published + "）" : "") + "，可前往 GitHub 下载。";
+      if (download) { download.href = d.url; download.style.display = ""; }
+      if (hint) hint.className = "hint";
+      if (interactive) window.toast("发现新版本 v" + d.latest);
+    } else {
+      state.textContent = "已是最新";
+      if (badge) { badge.textContent = "v" + current; badge.className = "advmeta ok"; }
+      hint.textContent = "当前 v" + current + "，GitHub 最新版本 v" + (d.latest || current)
+        + (d.cached ? "（缓存结果）" : "") + "。";
+      if (download) download.style.display = "none";
+      if (hint) hint.className = "hint";
+      if (interactive) window.toast("已是最新版本");
+    }
+  } catch (e) {
+    state.textContent = "检查失败";
+    if (badge) { badge.textContent = "v" + current; badge.className = "advmeta warn"; }
+    hint.textContent = e.message || "检查更新失败，请稍后重试";
+    if (hint) hint.className = "savehint";
+    if (download) download.style.display = "none";
+    if (interactive) window.toast("检查更新失败");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "检查更新"; }
+  }
+}
+
 loadThumbCache();
+checkUpdate(false, false);
 
 // 顶栏/外链的 #network、#thumbs 锚点：自动展开对应折叠区
 function openHashDetails(){
