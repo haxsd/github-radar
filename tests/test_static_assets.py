@@ -116,6 +116,32 @@ class TestMacrosAreWired(unittest.TestCase):
         self.assertIn("function checkUpdate", js)
         self.assertIn("/api/update/check", js)
 
+    def test_settings_page_has_autostart_toggle(self):
+        html = (TEMPLATES / "settings.html").read_text(encoding="utf-8")
+        for marker in ('id="startup"', 'id="autostartToggle"', 'id="autostartState"'):
+            self.assertIn(marker, html, f"设置页缺少自启动标记: {marker}")
+        js = (STATIC / "js" / "settings.js").read_text(encoding="utf-8")
+        self.assertIn("function toggleAutostart", js)
+        self.assertIn("/api/settings/autostart", js)
+
+    def test_settings_page_has_llm_proxy_and_error_clear(self):
+        html = (TEMPLATES / "settings.html").read_text(encoding="utf-8")
+        for marker in ('id="llmProxy"', "dismissError(this)", "StarScout"):
+            self.assertIn(marker, html, f"设置页缺少标记: {marker}")
+        base = (TEMPLATES / "base.html").read_text(encoding="utf-8")
+        self.assertIn("dismissError(this)", base)
+        self.assertNotIn("设置 · GitHub 中文雷达", html)
+        js = (STATIC / "js" / "settings.js").read_text(encoding="utf-8")
+        self.assertIn("llm_proxy", js)
+
+    def test_settings_page_has_schedule_status(self):
+        html = (TEMPLATES / "settings.html").read_text(encoding="utf-8")
+        self.assertIn("自动采集", html)
+        self.assertIn("00:00 / 08:00 / 16:00", html)
+        self.assertIn("scheduler_last_attempt_at", html)
+        base_js = (STATIC / "js" / "base.js").read_text(encoding="utf-8")
+        self.assertIn("clear-error", base_js)
+
 
 if __name__ == "__main__":
     unittest.main()

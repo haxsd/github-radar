@@ -11,6 +11,32 @@ window.toast = function (message) {
   toastTimer = setTimeout(function () { el.classList.remove("show"); }, 1900);
 };
 
+// 清除采集失败横幅。失败记录保存在 meta 里，必须显式清除才会消失。
+window.dismissError = async function (btn) {
+  var box = btn.closest(".errbar") || btn.closest(".result");
+  if (btn) btn.disabled = true;
+  try {
+    var token = "";
+    try { token = sessionStorage.getItem("radar_admin_token") || ""; } catch (e) {}
+    var resp = await fetch("/api/status/clear-error", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(token ? { admin_token: token } : {}),
+    });
+    var data = await resp.json();
+    if (!resp.ok || !data.ok) throw new Error(data.error || "清除失败");
+    if (box && box.classList.contains("errbar")) box.remove();
+    if (box && box.classList.contains("result")) {
+      box.className = "result ok";
+      box.textContent = "失败提示已清除。";
+    }
+    window.toast("已清除失败提示");
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    window.toast(e.message || "清除失败");
+  }
+};
+
 // ---------- 对话框焦点管理（供 feed / rank 等弹层复用） ----------
 var activeDialog = null;
 function dialogFocusables(root) {

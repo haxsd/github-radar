@@ -2,7 +2,7 @@
 ; 构建：先用 build_app.bat 生成 dist\StarScout，再运行 build_installer.bat
 
 #define MyAppName "GitHub 中文雷达"
-#define MyAppVersion "0.7.1"
+#define MyAppVersion "0.7.3"
 #define MyAppPublisher "GitHub Radar contributors"
 #define MyAppURL "https://github.com/haxsd/github-radar"
 #define MyAppExeName "StarScout.exe"

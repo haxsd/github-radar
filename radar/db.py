@@ -99,9 +99,9 @@ CREATE INDEX IF NOT EXISTS idx_repo_tags_tag ON repo_tags(tag);
 CREATE INDEX IF NOT EXISTS idx_repo_tags_kind ON repo_tags(kind);
 """
 
-# 改 SCHEMA（新增表/列/索引）时必须 +1；init_db 用 PRAGMA user_version 做一次性初始化，
+# 改 SCHEMA 或做一次性数据迁移时必须 +1；init_db 用 PRAGMA user_version 做一次性初始化，
 # 避免每次连接数据库都重新解析执行整套 DDL。
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def now_iso() -> str:
@@ -147,6 +147,7 @@ def init_db(conn: sqlite3.Connection | None = None) -> None:
             if name not in cols:
                 conn.execute(f"ALTER TABLE repos ADD COLUMN {name} {ddl}")
         _normalize_legacy_event_times(conn)
+        _mark_translated_events_ready(conn)
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         conn.commit()
     if own:
@@ -174,6 +175,22 @@ def _normalize_legacy_event_times(conn: sqlite3.Connection) -> None:
             (dt.isoformat(timespec="seconds"), row["id"]),
         )
     meta_set(conn, "event_tz_local_v1", "1")
+
+
+def _mark_translated_events_ready(conn: sqlite3.Connection) -> None:
+    """补齐 v0.7.3 之前已翻译仓库的更新事件。
+
+    ``set_translation`` 会把仓库已有事件一次性置为可出卡，但老项目的
+    stars/release 事件是后来新增的，不会再次走翻译流程，因此需要迁移修复。
+    """
+    conn.execute(
+        """UPDATE events SET card_ready=1
+           WHERE card_ready=0
+             AND repo_id IN (
+               SELECT id FROM repos
+               WHERE description_zh IS NOT NULL AND TRIM(description_zh) <> ''
+             )"""
+    )
 
 
 # ---------------- meta ----------------
@@ -307,11 +324,20 @@ def add_event(
     kind: str,
     occurred_at: str | None = None,
     payload: dict[str, Any] | None = None,
+    card_ready: bool = False,
 ) -> bool:
     occurred_at = occurred_at or now_iso()
     cur = conn.execute(
-        "INSERT OR IGNORE INTO events(repo_id, kind, occurred_at, payload) VALUES(?,?,?,?)",
-        (repo_id, kind, occurred_at, json.dumps(payload or {}, ensure_ascii=False)),
+        """INSERT OR IGNORE INTO events(
+             repo_id, kind, occurred_at, payload, card_ready
+           ) VALUES(?,?,?,?,?)""",
+        (
+            repo_id,
+            kind,
+            occurred_at,
+            json.dumps(payload or {}, ensure_ascii=False),
+            1 if card_ready else 0,
+        ),
     )
     return cur.rowcount > 0
 

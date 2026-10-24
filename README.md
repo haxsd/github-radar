@@ -14,13 +14,16 @@
 - **收藏与历史**：收藏可写备注、导出 Markdown；跳过后悔可以放回信息流
 - **口味反馈**：收藏 / 感兴趣 / 跳过会调整标签权重，越刷越合口味
 - **检查更新**：设置页检查 GitHub 最新 Release，有新版本时直达下载页
+- **自启动开关**：设置页可控制是否随 Windows 登录启动到托盘
+- **自动更新**：网页 / 托盘程序运行期间，每天 00:00 / 08:00 / 16:00 自动增量采集，错过后自动补跑
 - **纯本地**：SQLite 存储、无遥测；模型可配 DeepSeek / OpenAI / 本地 Ollama 等任意 OpenAI 兼容接口
 
 ## 下载安装（Windows）
 
 从 [Releases](https://github.com/haxsd/github-radar/releases/latest) 下载唯一安装包：
 
-- `GitHubRadar-Setup-0.7.1.exe`：双击安装，不需要管理员权限；带开始菜单 / 桌面快捷方式、系统托盘，可在「设置 → 应用」卸载。
+- `GitHubRadar-Setup-0.7.3.exe`：双击安装，不需要管理员权限；带开始菜单 / 桌面快捷方式、系统托盘，可在「设置 → 应用」卸载。
+- 便携包 `StarScout-0.7.3-win64.zip` 必须完整解压后运行 `StarScout.exe`，exe 需要和 `_internal` 文件夹在一起；只复制 exe 会提示 `Failed to load Python DLL`。
 - 数据默认保存在 `%LOCALAPPDATA%\GitHubRadar\`（数据库、预览图缓存、日志、`.env`）。
 - 从旧版绿色目录迁移：运行 `StarScout.exe --import-data "旧目录路径"`，或把旧目录的 `data\` 与 `.env` 复制到上面的数据目录。
 
@@ -54,7 +57,7 @@ python -m radar.collect seed|wave|update|translate|tag|thumbs
 python -m radar.collect clean           # 预览可疑仓库，加 --apply 才真正隐藏
 ```
 
-Windows 下 `collect_bg.bat`（无窗口采集）与 `start_web.bat` 可直接交给任务计划程序。
+网页 / 桌面程序运行期间自带定时采集；外部 `collect_bg.bat` 仍可交给任务计划程序，采集锁会避免重复执行。
 
 ## 文档
 

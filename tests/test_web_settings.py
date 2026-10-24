@@ -107,6 +107,18 @@ class TestSettingsEndpoints(unittest.TestCase):
         self.assertEqual(resp.status_code, 200, "本机访问应允许保存")
         save_env.assert_called_once()
 
+    def test_loopback_save_llm_proxy(self):
+        payload = dict(VALID_SETTINGS, llm_proxy="http://127.0.0.1:7897")
+        with mock.patch.object(config, "WEB_ADMIN_TOKEN", "", create=True), mock.patch(
+            "radar.web.config.save_env"
+        ) as save_env, mock.patch(
+            "radar.web.config.github_token_status", return_value="env"
+        ):
+            resp = self._post("/api/settings", payload, LOOPBACK)
+        self.assertEqual(resp.status_code, 200)
+        values = save_env.call_args.args[0]
+        self.assertEqual(values["LLM_PROXY"], "http://127.0.0.1:7897")
+
     def test_loopback_base_url_with_newline_rejected(self):
         payload = dict(VALID_SETTINGS, base_url="https://x/\nEVIL=1")
         with mock.patch.object(config, "WEB_ADMIN_TOKEN", "", create=True), mock.patch(
@@ -176,6 +188,38 @@ class TestSettingsEndpoints(unittest.TestCase):
             resp = self._post("/api/demo/load", {}, REMOTE)
         self.assertEqual(resp.status_code, 403)
         load_demo.assert_not_called()
+
+    def test_autostart_toggle_loopback(self):
+        with mock.patch("radar.web.startup.supported", return_value=True), mock.patch(
+            "radar.web.startup.set_enabled", return_value=True
+        ) as set_enabled:
+            resp = self._post("/api/settings/autostart", {"enabled": True}, LOOPBACK)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json(), {"ok": True, "enabled": True})
+        set_enabled.assert_called_once_with(True)
+
+    def test_autostart_toggle_remote_forbidden(self):
+        with mock.patch.object(config, "WEB_ADMIN_TOKEN", "", create=True), mock.patch(
+            "radar.web.startup.set_enabled"
+        ) as set_enabled:
+            resp = self._post("/api/settings/autostart", {"enabled": True}, REMOTE)
+        self.assertEqual(resp.status_code, 403)
+        set_enabled.assert_not_called()
+
+    def test_clear_error_loopback(self):
+        with mock.patch("radar.web.feed.clear_error") as clear_error:
+            resp = self._post("/api/status/clear-error", {}, LOOPBACK)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json(), {"ok": True})
+        clear_error.assert_called_once_with()
+
+    def test_clear_error_remote_forbidden(self):
+        with mock.patch.object(config, "WEB_ADMIN_TOKEN", "", create=True), mock.patch(
+            "radar.web.feed.clear_error"
+        ) as clear_error:
+            resp = self._post("/api/status/clear-error", {}, REMOTE)
+        self.assertEqual(resp.status_code, 403)
+        clear_error.assert_not_called()
 
     def test_fetch_image_bytes_rejects_unsafe_before_request(self):
         with mock.patch(

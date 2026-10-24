@@ -43,6 +43,10 @@ class TestProxyConfig(unittest.TestCase):
             self.assertIsNone(config.llm_proxies())
             config.LLM_PROXY = "http://127.0.0.1:7897"
             self.assertEqual(config.llm_proxies()["http"], "http://127.0.0.1:7897")
+            self.assertEqual(
+                config.llm_proxies("http://127.0.0.1:7890")["https"],
+                "http://127.0.0.1:7890",
+            )
         finally:
             config.LLM_PROXY = original
 

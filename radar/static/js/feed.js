@@ -223,7 +223,7 @@ async function loadMore(first){
       } else {
         $("sentinel").innerHTML=emptyBlock(ICON.check,
           state.tags.length?"该筛选下没有更多了":"这一波刷完了",
-          "下一波数据会在 00:00 / 08:00 / 16:00 自动补齐");
+          "保持应用运行，下一波会在 00:00 / 08:00 / 16:00 自动补齐");
       }
     } else {
       $("sentinel").innerHTML="";

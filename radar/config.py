@@ -296,6 +296,7 @@ def llm_config(overrides: dict[str, object] | None = None) -> dict[str, object]:
         "api_key": str(_pick("api_key", LLM_API_KEY) or ""),
         "json_mode": bool(_pick("json_mode", LLM_JSON_MODE)),
         "disable_thinking": bool(_pick("disable_thinking", LLM_DISABLE_THINKING)),
+        "proxy": str(_pick("llm_proxy", LLM_PROXY) or ""),
     }
 
 
@@ -394,9 +395,12 @@ def radar_proxies() -> dict[str, str] | None:
     return _proxy_dict(RADAR_PROXY)
 
 
-def llm_proxies() -> dict[str, str] | None:
-    """模型接口使用的显式代理；未配置时返回 None（保持直连）。"""
-    return _proxy_dict(LLM_PROXY)
+def llm_proxies(raw: str | None = None) -> dict[str, str] | None:
+    """模型接口使用的显式代理；未配置时返回 None（保持直连）。
+
+    ``raw`` 用于设置页测试表单里尚未保存的代理值，避免必须先保存才能测试。
+    """
+    return _proxy_dict(LLM_PROXY if raw is None else raw)
 
 
 def mask_proxy(raw: str) -> str:

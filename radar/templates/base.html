@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#070a10">
 <meta name="description" content="GitHub 中文雷达 StarScout：自动收录新项目、生成中文摘要，用信息流的方式发现值得关注的 GitHub 项目。">
-<title>{% block title %}GitHub 中文雷达{% endblock %}</title>
+<title>{% block title %}StarScout{% endblock %}</title>
 <link rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
 {% block style %}{% endblock %}
@@ -53,6 +53,7 @@
 <div class="errbar" role="alert">
   <span>⚠ 最近一次采集失败（{{ (stats.last_error_at or '')[:16] | replace('T',' ') }}{% if stats.last_error_scope %} · {{ stats.last_error_scope }}{% endif %}）：{{ stats.last_error | truncate(140, True, '…') }}</span>
   <a href="/settings">查看详情</a>
+  <button type="button" class="errclose" onclick="dismissError(this)">忽略</button>
 </div>
 {% endif %}
 <main id="main">

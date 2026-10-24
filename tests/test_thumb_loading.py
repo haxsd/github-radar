@@ -192,6 +192,44 @@ class TestThumbGeneration(_TempThumbTestCase):
             with Image.open(path) as img:
                 self.assertEqual(img.width, width)
 
+    def test_existing_240_does_not_block_missing_widths(self):
+        import io
+
+        from PIL import Image
+
+        rid = self._insert_repo(SAFE_OG)
+        cache = web._thumb_path(rid, 240)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_bytes(b"\xff\xd8old")
+        buffer = io.BytesIO()
+        Image.new("RGB", (1200, 630), (10, 20, 30)).save(buffer, "PNG")
+        with mock.patch.object(web, "_fetch_image_bytes", return_value=buffer.getvalue()):
+            web._generate_thumb(rid, 240, SAFE_OG, "demo")
+        self.assertTrue(web._thumb_path(rid, 480).exists())
+        self.assertTrue(web._thumb_path(rid, 960).exists())
+
+    def test_bulk_widths_do_not_generate_960(self):
+        import io
+
+        from PIL import Image
+
+        rid = self._insert_repo(SAFE_OG)
+        buffer = io.BytesIO()
+        Image.new("RGB", (1200, 630), (10, 20, 30)).save(buffer, "PNG")
+        with mock.patch.object(web, "_fetch_image_bytes", return_value=buffer.getvalue()):
+            web._generate_thumb(
+                rid, 240, web._generated_og_url("demo/repo"), "demo", out_widths=web.THUMB_BULK_WIDTHS
+            )
+        self.assertTrue(web._thumb_path(rid, 240).exists())
+        self.assertTrue(web._thumb_path(rid, 480).exists())
+        self.assertFalse(web._thumb_path(rid, 960).exists())
+
+    def test_generated_og_url(self):
+        self.assertEqual(
+            web._generated_og_url("owner/repo"),
+            "https://opengraph.githubassets.com/1/owner/repo",
+        )
+
 
 class TestThumbRateLimiting(_TempThumbTestCase):
     def test_wait_slot_spaces_requests(self):

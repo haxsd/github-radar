@@ -57,6 +57,25 @@ _session = requests.Session()
 _session.trust_env = False
 
 
+def _friendly_llm_error(exc: Exception) -> str:
+    """把底层网络异常翻译成用户能采取行动的中文提示。"""
+    text = str(exc)
+    low = text.lower()
+    if "getaddrinfo" in low or "name resolution" in low or "name or service not known" in low:
+        return (
+            "无法解析模型接口域名（DNS）。如果本机需要代理，请在"
+            "「设置 → 网络与代理 → 模型接口代理」填写代理地址，例如 "
+            "http://127.0.0.1:7897。原始错误：%s" % text
+        )
+    if "proxyerror" in low or "proxy" in low and "connect" in low:
+        return "连接模型代理失败。请确认代理软件正在运行，并检查模型接口代理地址。原始错误：%s" % text
+    if "sslerror" in low or "certificate" in low:
+        return "模型接口 TLS/证书连接失败，请检查代理或网络环境。原始错误：%s" % text
+    if "expecting value" in low or "jsondecode" in low:
+        return "模型返回的内容不是合法 JSON（可能是模型输出格式问题），可以重试。原始错误：%s" % text
+    return text
+
+
 def _extract_json(content: str) -> dict[str, Any]:
     """模型偶尔会包 markdown / 前后缀，尽量提取出 JSON 对象。"""
     text = (content or "").strip()
@@ -101,7 +120,7 @@ def _chat_json(
 
     last_err: Exception | None = None
     json_mode = bool(cfg["json_mode"])
-    proxies = config.llm_proxies() or {}
+    proxies = config.llm_proxies(str(cfg.get("proxy") or "")) or {}
     for attempt in range(3):
         try:
             resp = _session.post(
@@ -130,7 +149,7 @@ def _chat_json(
         except Exception as exc:
             last_err = exc
             time.sleep(1.2 * (attempt + 1))
-    raise LLMError(f"模型调用失败（{cfg['provider']}/{cfg['model']}）: {last_err}")
+    raise LLMError("模型调用失败（%s/%s）: %s" % (cfg["provider"], cfg["model"], _friendly_llm_error(last_err)))
 
 
 def _repo_info(repo: dict[str, Any]) -> str:

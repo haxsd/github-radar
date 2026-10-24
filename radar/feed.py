@@ -283,6 +283,9 @@ def stats() -> dict[str, Any]:
         "hidden": db.count_hidden(conn),
         "last_wave_at": last_success,
         "collecting": db.meta_get(conn, "collecting") == "1",
+        "scheduler_last_attempt_at": db.meta_get(conn, "scheduler_last_attempt_at") or "",
+        "scheduler_last_result": db.meta_get(conn, "scheduler_last_result") or "",
+        "scheduler_last_finished_at": db.meta_get(conn, "scheduler_last_finished_at") or "",
         # 最近一次采集失败摘要（网页顶部红条 / 设置页采集状态卡）
         "last_error": db.meta_get(conn, "last_error_message") or "",
         "last_error_at": error_at,
@@ -292,6 +295,19 @@ def stats() -> dict[str, Any]:
     }
     conn.close()
     return out
+
+
+def clear_error() -> None:
+    """清除网页顶部的最近失败提示（用户主动忽略）。"""
+    conn = db.connect()
+    db.init_db(conn)
+    try:
+        conn.execute(
+            "DELETE FROM meta WHERE key IN ('last_error_at','last_error_scope','last_error_message')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ---------------- 榜单 ----------------

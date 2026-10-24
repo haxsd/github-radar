@@ -47,6 +47,13 @@ class TestLlmChatUrl(unittest.TestCase):
             with self.assertRaisesRegex(llm.LLMError, "模型名未配置"):
                 llm._chat_json([{"role": "user", "content": "hi"}], max_tokens=10)
 
+    def test_dns_error_is_explained(self):
+        message = llm._friendly_llm_error(
+            RuntimeError("getaddrinfo failed for api.deepseek.com")
+        )
+        self.assertIn("DNS", message)
+        self.assertIn("模型接口代理", message)
+
     def test_overrides_do_not_touch_global_config(self):
         original = (config.LLM_PROVIDER, config.LLM_BASE_URL, config.LLM_MODEL)
         cfg = config.llm_config(

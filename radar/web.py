@@ -8,6 +8,7 @@ import ipaddress
 import logging
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from urllib.parse import urljoin
@@ -15,7 +16,7 @@ from urllib.parse import urljoin
 import requests
 from flask import Flask, jsonify, redirect, render_template, request, send_file
 
-from . import collect, config, db, feed, llm, netguard, network, update
+from . import collect, config, db, feed, llm, netguard, network, startup, update
 
 app = Flask(__name__, template_folder="templates")
 app.json.ensure_ascii = False  # 中文直接以 UTF-8 输出，少约一半转义字符
@@ -215,6 +216,10 @@ def settings_page():
         settings_writable=settings_writable,
         radar_proxy_configured=bool(config.RADAR_PROXY),
         radar_proxy_display=config.mask_proxy(config.RADAR_PROXY),
+        llm_proxy_configured=bool(config.LLM_PROXY),
+        llm_proxy_display=config.mask_proxy(config.LLM_PROXY),
+        autostart_available=startup.supported(),
+        autostart_enabled=startup.enabled(),
     )
 
 
@@ -234,8 +239,11 @@ def api_settings_save():
     model = str(data.get("model") or "").strip() or str(preset["model"] or "")
     api_key = str(data.get("api_key") or "").strip()
     proxy_raw = str(data.get("proxy") or "").strip()
+    llm_proxy_raw = str(data.get("llm_proxy") or "").strip()
     if proxy_raw.lower() in ("direct", "none", "off", "no"):
         proxy_raw = ""  # 显式直连 / 清除代理
+    if llm_proxy_raw.lower() in ("direct", "none", "off", "no"):
+        llm_proxy_raw = ""
     if _has_newline(
         {
             "github_token": token,
@@ -243,6 +251,7 @@ def api_settings_save():
             "model": model,
             "api_key": api_key,
             "proxy": proxy_raw,
+            "llm_proxy": llm_proxy_raw,
         }
     ):
         return jsonify({"ok": False, "error": "配置值不能包含换行符"}), 400
@@ -250,6 +259,10 @@ def api_settings_save():
         values["RADAR_PROXY"] = proxy_raw
     elif "proxy" in data:
         values["RADAR_PROXY"] = ""
+    if llm_proxy_raw:
+        values["LLM_PROXY"] = llm_proxy_raw
+    elif "llm_proxy" in data:
+        values["LLM_PROXY"] = ""
     if token:
         values["GITHUB_TOKEN"] = token
     values["LLM_PROVIDER"] = provider
@@ -305,7 +318,7 @@ def api_settings_test():
         started = time.time()
         try:
             overrides: dict[str, object] = {}
-            for key in ("provider", "base_url", "model", "api_key"):
+            for key in ("provider", "base_url", "model", "api_key", "llm_proxy"):
                 value = data.get(key)
                 if isinstance(value, str) and value.strip():
                     overrides[key] = value.strip()
@@ -327,6 +340,32 @@ def api_settings_test():
         except Exception as exc:
             return jsonify({"ok": False, "error": f"模型调用失败：{exc}"})
     return jsonify({"ok": False, "error": "未知的测试目标"}), 400
+
+
+@app.post("/api/settings/autostart")
+def api_settings_autostart():
+    data = _json_body()
+    if not _can_write_settings(request.remote_addr, _provided_admin_token(data)):
+        logger.warning("拒绝远程开机启动设置请求，remote=%s", request.remote_addr)
+        return _settings_denied_response()
+    if not startup.supported():
+        return jsonify({"ok": False, "error": "当前环境不支持开机自启动设置"}), 400
+    try:
+        final = startup.set_enabled(bool(data.get("enabled")))
+    except Exception as exc:
+        logger.warning("设置开机启动失败: %s", exc)
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "enabled": final})
+
+
+@app.post("/api/status/clear-error")
+def api_clear_error():
+    data = _json_body()
+    if not _can_write_settings(request.remote_addr, _provided_admin_token(data)):
+        logger.warning("拒绝远程清除失败提示请求，remote=%s", request.remote_addr)
+        return _settings_denied_response()
+    feed.clear_error()
+    return jsonify({"ok": True})
 
 
 THUMB_DIR = config.DATA_DIR / "thumbs"
@@ -452,19 +491,31 @@ def _fetch_image_bytes(url: str, timeout: float = 12.0, max_bytes: int = MAX_IMA
         sess.close()
 
 
-def _generate_thumb(repo_id: int, width: int, og: str, owner: str) -> bool:
+def _generate_thumb(
+    repo_id: int,
+    width: int,
+    og: str,
+    owner: str,
+    out_widths: tuple[int, ...] | None = None,
+) -> bool:
     """下载 GIF/PNG 预览图并压缩缓存（只应在后台线程里调用）。
 
-    返回 True 表示请求的宽度已经落盘；False 表示被 429 限流/下载失败（稍后重试）。
+    ``out_widths`` 指定本次要生成的宽度；批量预热传 240/480 时不会生成 960，
+    详情页之后按需用项目自定义大图补 960。
+    返回 True 表示请求的宽度都已经落盘；False 表示被 429 限流/下载失败。
     """
     key = (repo_id, width)
     with _THUMB_LOCK:
         if key in _THUMB_PENDING:
-            return _thumb_path(repo_id, width).exists()
+            return all(
+                _thumb_path(repo_id, w).exists()
+                for w in (out_widths or THUMB_STANDARD_WIDTHS)
+            )
         _THUMB_PENDING.add(key)
     try:
-        cache = _thumb_path(repo_id, width)
-        if cache.exists():
+        # 只有所有目标宽度都齐了才算命中；老缓存可能只有 240，需要补 480
+        all_widths = sorted({width, *(out_widths or THUMB_STANDARD_WIDTHS)})
+        if all(_thumb_path(repo_id, out_width).exists() for out_width in all_widths):
             return True
         import io
 
@@ -482,7 +533,7 @@ def _generate_thumb(repo_id: int, width: int, og: str, owner: str) -> bool:
         img = img.convert("RGB")
         # 一次下载同时生成 240 / 480 / 960 三档（列表、日报、详情复用），减少 CDN 请求
         THUMB_DIR.mkdir(parents=True, exist_ok=True)
-        for out_width in sorted({width, *THUMB_STANDARD_WIDTHS}):
+        for out_width in all_widths:
             target = _thumb_path(repo_id, out_width)
             if target.exists():
                 continue
@@ -491,7 +542,7 @@ def _generate_thumb(repo_id: int, width: int, og: str, owner: str) -> bool:
             tmp = target.with_suffix(".tmp")
             out.save(tmp, "JPEG", quality=80, optimize=True)
             tmp.replace(target)
-        return cache.exists()
+        return all(_thumb_path(repo_id, out_width).exists() for out_width in all_widths)
     except Exception as exc:
         response = getattr(exc, "response", None)
         status = getattr(response, "status_code", None)
@@ -530,6 +581,8 @@ THUMB_429_BURST_WINDOW = 60.0
 THUMB_429_BURST_LIMIT = 5
 # 一次下载后顺手生成这些常用宽度，避免列表(240)/日报(480)/详情(960)各下载一次
 THUMB_STANDARD_WIDTHS = (240, 480, 960)
+# 批量预热只需要列表/日报尺寸；详情 960 留给按需下载自定义大图
+THUMB_BULK_WIDTHS = (240, 480)
 _THUMB_RATE_LOCK = threading.Lock()
 _THUMB_DOWNLOAD_LOCK = threading.Lock()  # 所有远端下载串行，避免并发触发 CDN 429
 _THUMB_NEXT_SLOT = 0.0
@@ -542,6 +595,11 @@ _THUMB_LAST_ON_DEMAND = 0.0
 def _thumb_cooling_down() -> bool:
     with _THUMB_RATE_LOCK:
         return time.time() < _THUMB_COOLDOWN_UNTIL
+
+
+def _thumb_cooldown_remaining() -> float:
+    with _THUMB_RATE_LOCK:
+        return max(0.0, _THUMB_COOLDOWN_UNTIL - time.time())
 
 
 def _thumb_retry_remaining(repo_id: int, width: int) -> float:
@@ -803,6 +861,109 @@ def _run_thumb_prefetch(items: list[dict[str, Any]]) -> None:
 def _prefetch_snapshot() -> dict[str, Any]:
     with _PREFETCH_LOCK:
         return dict(_PREFETCH_STATE)
+
+
+def _generated_og_url(full_name: str) -> str:
+    """GitHub 自动生成的 OG 卡片，比很多自定义仓库大图小一个数量级。"""
+    return "https://opengraph.githubassets.com/1/" + str(full_name)
+
+
+def prefetch_all_thumbs(
+    limit: int = 20000,
+    max_passes: int = 2,
+    log: Callable[[str], None] = print,
+) -> dict[str, int]:
+    """批量缓存信息流/日报尺寸（240/480），可断点续跑、自动等待 429 冷却。
+
+    第一轮优先用 GitHub 自动生成的小图；失败后第二轮回退到仓库自定义大图。
+    详情页的 960 不在这里生成，留给用户点开时按需下载自定义大图。
+    """
+    limit = max(1, min(int(limit), 50000))
+    conn = db.connect()
+    db.init_db(conn)
+    rows = conn.execute(
+        """SELECT r.id, r.full_name, r.og_image, r.owner
+           FROM repos r
+           LEFT JOIN events e ON e.repo_id = r.id
+           WHERE r.hidden = 0
+             AND r.og_image IS NOT NULL AND r.og_image <> ''
+           GROUP BY r.id
+           ORDER BY MAX(e.occurred_at) DESC, r.stars DESC, r.id
+           LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    conn.close()
+
+    def _complete(item: dict[str, Any]) -> bool:
+        return all(_thumb_path(item["id"], w).exists() for w in THUMB_BULK_WIDTHS)
+
+    pending: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["url"] = _generated_og_url(item["full_name"])
+        item["fallback_url"] = str(item.get("og_image") or "")
+        if not _complete(item):
+            pending.append(item)
+    total = len(pending)
+    skipped = len(rows) - total
+    log(f"[thumbs] 待缓存 {total} 个仓库（240/480），已跳过完整缓存 {skipped} 个")
+    if not pending:
+        return {"total": 0, "saved": 0, "failed": 0, "processed": 0, "remaining": 0}
+
+    saved = 0
+    failed = 0
+    processed = 0
+    for round_no in range(max(1, max_passes)):
+        next_pending: list[dict[str, Any]] = []
+        for item in pending:
+            if _complete(item):
+                saved += 1
+                processed += 1
+                continue
+            cooldown = _thumb_cooldown_remaining()
+            if cooldown > 0:
+                wait = min(60.0, max(5.0, cooldown))
+                log(f"[thumbs] 图片 CDN 冷却中，等待 {int(wait)}s…")
+                time.sleep(wait)
+            _generate_thumb(
+                item["id"],
+                240,
+                item["url"],
+                item["owner"] or "",
+                out_widths=THUMB_BULK_WIDTHS,
+            )
+            processed += 1
+            if _complete(item):
+                saved += 1
+            else:
+                failed += 1
+                if round_no + 1 < max_passes:
+                    fallback = item.get("fallback_url") or ""
+                    if fallback and fallback != item.get("url"):
+                        # 自动生成图失败时，第二轮改用仓库自己的自定义大图
+                        item["url"] = fallback
+                    next_pending.append(item)
+            if processed % 25 == 0:
+                log(f"[thumbs] 进度 {processed}/{total} · 成功 {saved} · 失败 {failed}")
+        pending = next_pending
+        if not pending:
+            break
+        log(f"[thumbs] 第 {round_no + 1} 轮结束，剩余 {len(pending)} 个，稍后重试")
+        time.sleep(30)
+
+    result = {
+        "total": total,
+        "saved": saved,
+        "failed": failed,
+        "processed": processed,
+        "remaining": len(pending),
+    }
+    log(
+        f"[thumbs] 完成：成功 {saved}/{total}"
+        + (f"，失败 {failed}" if failed else "")
+        + (f"，仍待重试 {len(pending)}" if pending else "")
+    )
+    return result
 
 
 
@@ -1106,12 +1267,13 @@ def api_repo(repo_id: int):
     return jsonify({"ok": True, "card": card})
 
 
-def _startup_catchup() -> None:
+def _start_collection_scheduler() -> None:
     try:
-        collect.catchup_if_stale(max_age_hours=8.0)
+        if collect.start_scheduler():
+            logger.info("内置定时采集已启动：00:00 / 08:00 / 16:00")
     except Exception as exc:  # 后台线程不能把进程带崩
-        print(f"[startup] 补跑异常: {exc}")
-        logger.warning("[startup] 补跑异常: %s", exc)
+        print(f"[scheduler] 启动异常: {exc}")
+        logger.warning("[scheduler] 启动异常: %s", exc)
 
 
 def _port_in_use(host: str, port: int) -> bool:
@@ -1140,7 +1302,7 @@ def main() -> None:
     conn = db.connect()
     db.init_db(conn)
     conn.close()
-    threading.Thread(target=_startup_catchup, daemon=True).start()
+    _start_collection_scheduler()
     _start_thumb_warmer()
     print(f"雷达页面：http://{config.WEB_HOST}:{config.WEB_PORT}")
     try:

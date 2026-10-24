@@ -162,7 +162,10 @@ def _check_llm() -> dict[str, Any]:
         if provider == "ollama":
             result["hint"] = "本地 Ollama 可能没有启动（ollama serve）"
         else:
-            result["hint"] = "检查 Base URL / 网络；如模型在境外可配置 LLM_PROXY"
+            result["hint"] = (
+                "检查 Base URL / 网络；若报 DNS 解析失败或模型在境外，"
+                "请在设置 → 网络与代理 → 模型接口代理填写本机代理"
+            )
         return result
     status = result.get("status")
     result["message"] = f"可连接（{provider}，HTTP {status}）"

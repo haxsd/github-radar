@@ -27,7 +27,7 @@ jobs:
           ruff check .
       - name: Import smoke test
         run: |
-          python -c "from radar import config, db, feed, llm, web, collect, demo, github, taxonomy, update"
+          python -c "from radar import config, db, feed, llm, web, collect, demo, github, taxonomy, update, startup"
           python -c "from radar import demo; items = demo.load_items(); assert items, 'demo data empty'; print(len(items), 'demo items')"
       - name: Frontend syntax check
         run: |

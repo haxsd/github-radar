@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}设置 · GitHub 中文雷达{% endblock %}
+{% block title %}设置 · StarScout{% endblock %}
 {% from "_macros.html" import icon %}
 
 {% block style %}
@@ -246,7 +246,13 @@
           <label for="radarProxy">网络代理（可选）</label>
           <input id="radarProxy" spellcheck="false" autocomplete="off"
             placeholder="{{ ('已配置：' ~ radar_proxy_display ~ '，留空保持不变') if radar_proxy_configured else '例如 http://127.0.0.1:7897（留空 = 直连）' }}">
-          <span class="hint">用于 GitHub API 与缩略图 CDN，改完点下方「保存配置」。填 <code>direct</code> / <code>none</code> 可清除；模型接口如需代理可在 <code>.env</code> 设置 <code>LLM_PROXY</code>。</span>
+          <span class="hint">用于 GitHub API 与缩略图 CDN，改完点下方「保存配置」。填 <code>direct</code> / <code>none</code> 可清除。</span>
+        </div>
+        <div class="field">
+          <label for="llmProxy">模型接口代理（可选）</label>
+          <input id="llmProxy" spellcheck="false" autocomplete="off"
+            placeholder="{{ ('已配置：' ~ llm_proxy_display ~ '，留空保持不变') if llm_proxy_configured else '例如 http://127.0.0.1:7897（留空 = 直连）' }}">
+          <span class="hint">模型接口默认直连；如果「测试模型」报 DNS/连接失败，填与网络代理相同的地址即可。填 <code>direct</code> / <code>none</code> 可清除。</span>
         </div>
         <div class="adv-actions">
           <button type="button" class="btn sm" onclick="refreshNetwork(true)">重新检测</button>
@@ -285,6 +291,16 @@
       </summary>
       <div class="advbody">
         <div class="statusgrid">
+          <span class="item">自动采集 <b>每 8 小时</b> <span class="muted">00:00 / 08:00 / 16:00</span></span>
+          <span class="item">上次定时尝试：
+            {% if stats.scheduler_last_attempt_at %}
+              {% set scheduler_label = {'ok': '成功', 'running': '进行中', 'error': '失败'}.get(stats.scheduler_last_result, '未知') %}
+              <span class="pill {{ 'ok' if stats.scheduler_last_result == 'ok' else ('warn' if stats.scheduler_last_result == 'running' else 'bad') }}">{{ scheduler_label }}</span>
+              <span class="muted">{{ (stats.scheduler_last_attempt_at or '')[:16] | replace('T',' ') }}</span>
+            {% else %}
+              <span class="pill warn">尚未触发</span>
+            {% endif %}
+          </span>
           <span class="item">最近成功：
             {% if stats.last_wave_at %}<span class="pill ok">{{ (stats.last_wave_at or '')[:16] | replace('T',' ') }}</span>
             {% else %}<span class="pill warn">还没有成功采集过</span>{% endif %}
@@ -296,12 +312,37 @@
           最近一次失败（{{ (stats.last_error_at or '')[:16] | replace('T',' ') }} · {{ stats.last_error_scope or 'collect' }}）：
           {{ stats.last_error }}
           {% if not stats.error_active %}<span class="muted">（后续采集已成功）</span>{% endif %}
+          <button type="button" class="errclose" onclick="dismissError(this)">清除提示</button>
         </div>
         {% else %}
         <div class="result ok">最近没有采集失败记录。</div>
         {% endif %}
+        <p class="hint">应用运行期间会按 00:00 / 08:00 / 16:00 自动采集，睡眠或关机错过时会在恢复后补跑一次；与外部任务计划并存时由采集锁去重。关闭应用后不会在后台运行。</p>
         <p class="hint">完整日志在数据目录的 <code>logs/</code> 里；首页顶部也会提示采集失败。</p>
         {% if needs_setup %}<p class="hint">还没配 Key 时采集失败属于预期，先完成上面的 GitHub 与 AI 配置。</p>{% endif %}
+      </div>
+    </details>
+
+    <details class="adv" id="startup">
+      <summary>
+        <span class="picon small">{{ icon("shield") }}</span>
+        <span class="advtitle"><b>启动与运行</b><small>开机自动启动 / 托盘</small></span>
+        <span class="advmeta {{ 'ok' if autostart_enabled else '' }}" id="autostartBadge">{{ '已开启' if autostart_enabled else '已关闭' }}</span>
+        {{ icon("chevron", "chev") }}
+      </summary>
+      <div class="advbody">
+        <div class="statusgrid">
+          <span class="item">开机自启动 <b id="autostartState">{{ '已开启' if autostart_enabled else '已关闭' }}</b></span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="autostartToggle" {{ 'checked' if autostart_enabled else '' }}
+            {{ 'disabled' if not autostart_available or not settings_writable else '' }} onchange="toggleAutostart(this.checked)">
+          <span class="track"></span>
+          <span class="switchlabel">登录时自动启动到托盘</span>
+        </label>
+        <p class="hint" id="autostartHint">
+          {% if autostart_available %}关闭后不会开机启动，也不会在登录时自动补采集；仍可从开始菜单或桌面快捷方式打开。{% else %}当前环境不支持开机自启动设置（仅 Windows 安装版/源码版可用）。{% endif %}
+        </p>
       </div>
     </details>
 
@@ -328,7 +369,7 @@
 
   <div class="foot">
     保存后立即生效（无需重启）。配置保存在本地 <code>.env</code> 中，环境变量优先级更高。
-    <br><span class="muted">GitHub 中文雷达 <a href="#update">v{{ version }}</a></span>
+    <br><span class="muted">StarScout <a href="#update">v{{ version }}</a></span>
     {% if needs_setup %}<br>配置好后回到 <a href="/">信息流</a> 即可开始。{% endif %}
   </div>
 

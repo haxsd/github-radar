@@ -112,6 +112,8 @@ async function saveSettings(){
   if(key) body.api_key = key;
   const proxyEl = $("radarProxy");
   if(proxyEl && proxyEl.value.trim()) body.proxy = proxyEl.value.trim();
+  const llmProxyEl = $("llmProxy");
+  if(llmProxyEl && llmProxyEl.value.trim()) body.llm_proxy = llmProxyEl.value.trim();
   Object.assign(body, adminPayload());
   box.className = "result"; box.textContent = "保存中…";
   try{
@@ -122,6 +124,7 @@ async function saveSettings(){
     box.textContent = `已保存：${d.provider} / ${d.model}（GitHub：${d.github_status}）`;
     $("ghToken").value = ""; $("apiKey").value = "";
     if(proxyEl) proxyEl.value = "";
+    if(llmProxyEl) llmProxyEl.value = "";
     rememberAdminToken();
     clearDirty("已保存 · 立即生效");
     refreshNetwork(true);
@@ -145,6 +148,8 @@ async function testTarget(target){
     body.disable_thinking = $("disableThinking").checked;
     const key = $("apiKey").value.trim();
     if(key) body.api_key = key;
+    const llmProxy = $("llmProxy");
+    if(llmProxy && llmProxy.value.trim()) body.llm_proxy = llmProxy.value.trim();
   } else if(target === "github"){
     const token = $("ghToken").value.trim();
     if(token) body.github_token = token;
@@ -288,6 +293,46 @@ async function prefetchThumbs() {
     loadThumbCache();
   } catch (e) {
     hint.textContent = e.message;
+  }
+}
+
+async function toggleAutostart(enabled) {
+  const toggle = $("autostartToggle");
+  const state = $("autostartState");
+  const badge = $("autostartBadge");
+  const hint = $("autostartHint");
+  if (!writableGuard(hint)) {
+    if (toggle) toggle.checked = !enabled;
+    return;
+  }
+  try {
+    const r = await fetch("/api/settings/autostart", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled, ...adminPayload() }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || "设置失败");
+    if (state) state.textContent = d.enabled ? "已开启" : "已关闭";
+    if (badge) {
+      badge.textContent = d.enabled ? "已开启" : "已关闭";
+      badge.className = "advmeta" + (d.enabled ? " ok" : "");
+    }
+    if (hint) {
+      hint.className = "hint";
+      hint.textContent = d.enabled
+        ? "已开启：登录 Windows 后会启动到托盘。"
+        : "已关闭：不会开机启动，也不会在登录时自动补采集；仍可从开始菜单打开。";
+    }
+    rememberAdminToken();
+    window.toast(d.enabled ? "已开启开机自启动" : "已关闭开机自启动");
+  } catch (e) {
+    if (toggle) toggle.checked = !enabled;
+    if (hint) {
+      hint.className = "savehint";
+      hint.textContent = e.message || "设置失败";
+    }
+    window.toast("设置失败");
   }
 }
 

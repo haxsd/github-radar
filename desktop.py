@@ -244,7 +244,7 @@ def _start_server() -> bool:
         _fatal(f"本地服务启动失败：{exc}")
         return False
     threading.Thread(target=_SERVER.serve_forever, name="flask-server", daemon=True).start()
-    threading.Thread(target=web._startup_catchup, daemon=True).start()
+    web._start_collection_scheduler()
     web._start_thumb_warmer()
     return _wait_port(config.WEB_HOST, config.WEB_PORT)
 

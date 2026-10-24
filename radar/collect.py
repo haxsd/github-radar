@@ -12,7 +12,9 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import threading
 import time
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -68,6 +70,33 @@ def _record_failure(scope: str, exc: BaseException, conn=None) -> None:
             own.close()
     except Exception as write_exc:
         logger.warning("记录采集失败信息失败（独立连接，scope=%s）: %s", scope, write_exc)
+
+
+def _clear_failure(scope: str, conn=None) -> None:
+    """某一阶段成功后清掉同阶段的失败提示，不影响其他阶段的错误。"""
+    def _write(target) -> None:
+        if (db.meta_get(target, "last_error_scope") or "") != scope:
+            return
+        target.execute(
+            "DELETE FROM meta WHERE key IN ('last_error_at','last_error_scope','last_error_message')"
+        )
+        target.commit()
+
+    if conn is not None:
+        try:
+            _write(conn)
+            return
+        except Exception as write_exc:
+            logger.warning("清理采集失败信息失败（复用连接，scope=%s）: %s", scope, write_exc)
+    try:
+        own = db.connect()
+        try:
+            db.init_db(own)
+            _write(own)
+        finally:
+            own.close()
+    except Exception as write_exc:
+        logger.warning("清理采集失败信息失败（独立连接，scope=%s）: %s", scope, write_exc)
 
 
 def _fill_og_images(gh: github.GitHub, limit: int = 300) -> int:
@@ -301,6 +330,9 @@ def cmd_update(gh: github.GitHub | None = None, limit: int = 2000) -> int:
                 node = by_id.get(row["node_id"])
                 if not node:
                     continue
+                # 老项目已有中文卡片：新增的涨星/版本事件可直接出卡；
+                # 未翻译项目仍保持 card_ready=0，等翻译阶段统一置位。
+                card_ready = bool((row["description_zh"] or "").strip())
                 stars = node.get("stargazerCount") or 0
                 forks = node.get("forkCount") or 0
                 pushed = node.get("pushedAt")
@@ -327,7 +359,12 @@ def cmd_update(gh: github.GitHub | None = None, limit: int = 2000) -> int:
                     or delta / max(base, 1) >= config.STAR_JUMP_RATIO
                 ):
                     if db.add_event(
-                        conn, row["id"], "stars", db.now_iso(), {"delta": delta, "stars": stars}
+                        conn,
+                        row["id"],
+                        "stars",
+                        db.now_iso(),
+                        {"delta": delta, "stars": stars},
+                        card_ready=card_ready,
                     ):
                         events += 1
 
@@ -344,9 +381,12 @@ def cmd_update(gh: github.GitHub | None = None, limit: int = 2000) -> int:
                         "release",
                         _local_iso(rel.get("publishedAt")),
                         {"tag": tag},
+                        card_ready=card_ready,
                     ):
                         events += 1
             conn.commit()
+        if not failed_chunks:
+            _clear_failure("update", conn)
     except Exception as exc:
         logger.warning("[update] 失败: %s", exc)
         try:
@@ -393,6 +433,35 @@ def _release_lock() -> None:
         LOCK_FILE.unlink(missing_ok=True)
     except OSError as exc:
         logger.debug("删除采集锁失败: %s", exc)
+
+
+THUMB_LOCK_FILE = config.DATA_DIR / ".thumb-prefetch.lock"
+
+
+def _acquire_thumb_lock() -> bool:
+    """批量缩略图任务只允许一个进程，避免同时打 CDN 触发 429。"""
+    config.ensure_dirs()
+    try:
+        fd = os.open(THUMB_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
+        return True
+    except FileExistsError:
+        try:
+            # 进程异常退出可能留下锁；超过 12 小时视为过期
+            if time.time() - THUMB_LOCK_FILE.stat().st_mtime > 12 * 3600:
+                THUMB_LOCK_FILE.unlink(missing_ok=True)
+                return _acquire_thumb_lock()
+        except OSError as exc:
+            logger.debug("清理过期缩略图锁失败: %s", exc)
+        return False
+
+
+def _release_thumb_lock() -> None:
+    try:
+        THUMB_LOCK_FILE.unlink(missing_ok=True)
+    except OSError as exc:
+        logger.debug("删除缩略图锁失败: %s", exc)
 
 
 def _translated_total(conn) -> int:
@@ -598,6 +667,8 @@ def cmd_wave(
         if search_error is not None:
             # 放在 last_wave_at 之后记录，保证部分失败仍然在网页上可见
             _record_failure("wave-search", search_error, conn)
+        else:
+            _clear_failure("wave-search", conn)
 
         updated = cmd_update(gh, update_limit)
         translated = _translate_stage(conn, translate_limit)
@@ -624,6 +695,164 @@ def cmd_wave(
         if conn is not None:
             conn.close()
         _release_lock()
+
+
+# ---------------- 内置定时采集 ----------------
+
+WAVE_HOURS = (0, 8, 16)
+SCHEDULE_GRACE_HOURS = 2.0
+SCHEDULER_POLL_SECONDS = 60.0
+_SCHEDULER_LOCK = threading.Lock()
+_SCHEDULER_THREAD: threading.Thread | None = None
+
+
+def latest_scheduled_slot(now: datetime | None = None) -> datetime:
+    """返回不晚于 ``now`` 的最近一个 00:00 / 08:00 / 16:00 时间点。"""
+    current = now or datetime.now().astimezone()
+    if current.tzinfo is None:
+        current = current.astimezone()
+    for hour in reversed(WAVE_HOURS):
+        slot = current.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if slot <= current:
+            return slot
+    yesterday = current - timedelta(days=1)
+    return yesterday.replace(hour=WAVE_HOURS[-1], minute=0, second=0, microsecond=0)
+
+
+def _parse_local_time(value: str | None, target_tz) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+    return parsed.astimezone(target_tz)
+
+
+def scheduled_wave_due(
+    now: datetime | None,
+    last_success_at: str | None,
+    last_attempt_slot: str | None = None,
+    max_age_hours: float = 8.0,
+    grace_hours: float = SCHEDULE_GRACE_HOURS,
+    min_gap_hours: float = 2.0,
+) -> bool:
+    """判断当前是否应补跑一波采集。
+
+    - 正常在 00 / 08 / 16 点后的宽限期内执行；
+    - 电脑休眠错过时间点后，只要数据超过 8 小时也会补跑；
+    - 刚手动采集过时，至少隔 2 小时再执行，避免浪费 API 额度；
+    - 同一个时间点最多尝试一次，失败后等下一个时间点。
+    """
+    current = now or datetime.now().astimezone()
+    if current.tzinfo is None:
+        current = current.astimezone()
+    slot = latest_scheduled_slot(current)
+    attempt = _parse_local_time(last_attempt_slot, current.tzinfo)
+    if attempt is not None and attempt >= slot:
+        return False
+    last_success = _parse_local_time(last_success_at, current.tzinfo)
+    if last_success is None:
+        return True
+    if current - last_success < timedelta(hours=min_gap_hours):
+        return False
+    if last_success >= slot:
+        return False
+    if current - slot <= timedelta(hours=grace_hours):
+        return True
+    return current - last_success >= timedelta(hours=max_age_hours)
+
+
+def _last_collection_at(conn) -> str | None:
+    return db.meta_get(conn, "last_wave_at") or db.meta_get(conn, "last_seed_at")
+
+
+def _set_scheduler_result(result: str, error: str = "") -> None:
+    conn = db.connect()
+    try:
+        db.init_db(conn)
+        db.meta_set(conn, "scheduler_last_result", result)
+        db.meta_set(conn, "scheduler_last_finished_at", db.now_iso_ms())
+        if error:
+            db.meta_set(conn, "scheduler_last_error", error[:400])
+        else:
+            conn.execute("DELETE FROM meta WHERE key='scheduler_last_error'")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def run_due_wave_once(
+    now: datetime | None = None,
+    runner: Callable[[], None] | None = None,
+) -> bool:
+    """到点则执行一次采集；返回本次是否真正发起了任务。"""
+    current = now or datetime.now().astimezone()
+    if current.tzinfo is None:
+        current = current.astimezone()
+    conn = db.connect()
+    db.init_db(conn)
+    try:
+        last_success = _last_collection_at(conn)
+        last_attempt = db.meta_get(conn, "scheduler_last_attempt_slot")
+        if not scheduled_wave_due(current, last_success, last_attempt):
+            return False
+        # 新装/未配置时重试无意义；配置保存后下一分钟会自动再次判断。
+        if config.github_token_status() == "missing":
+            logger.debug("[scheduler] 尚未配置 GitHub Token，跳过本轮")
+            return False
+        slot = latest_scheduled_slot(current)
+        db.meta_set(conn, "scheduler_last_attempt_at", db.now_iso_ms())
+        db.meta_set(
+            conn, "scheduler_last_attempt_slot", slot.isoformat(timespec="minutes")
+        )
+        db.meta_set(conn, "scheduler_last_result", "running")
+        conn.commit()
+    finally:
+        conn.close()
+
+    logger.info("[scheduler] 执行定时采集：%s", slot.isoformat(timespec="minutes"))
+    try:
+        if runner is None:
+            cmd_wave(translate_limit=120, update_limit=600, tag_limit=200)
+        else:
+            runner()
+    except Exception as exc:
+        logger.warning("[scheduler] 定时采集失败: %s", exc)
+        _record_failure("scheduler", exc)
+        _set_scheduler_result("error", f"{type(exc).__name__}: {exc}")
+        return True
+    _set_scheduler_result("ok")
+    return True
+
+
+def _scheduler_loop(poll_seconds: float = SCHEDULER_POLL_SECONDS) -> None:
+    logger.info("[scheduler] 内置定时采集已启动（00:00 / 08:00 / 16:00）")
+    while True:
+        try:
+            run_due_wave_once()
+        except Exception as exc:  # 后台线程不能因单次异常退出
+            logger.warning("[scheduler] 调度循环异常: %s", exc)
+            _record_failure("scheduler", exc)
+        time.sleep(max(10.0, float(poll_seconds)))
+
+
+def start_scheduler(poll_seconds: float = SCHEDULER_POLL_SECONDS) -> bool:
+    """启动进程内定时采集线程；重复调用不会创建第二个线程。"""
+    global _SCHEDULER_THREAD
+    with _SCHEDULER_LOCK:
+        if _SCHEDULER_THREAD is not None and _SCHEDULER_THREAD.is_alive():
+            return False
+        _SCHEDULER_THREAD = threading.Thread(
+            target=_scheduler_loop,
+            args=(poll_seconds,),
+            name="radar-collect-scheduler",
+            daemon=True,
+        )
+        _SCHEDULER_THREAD.start()
+        return True
 
 
 def catchup_if_stale(max_age_hours: float = 8.0) -> bool:
@@ -662,35 +891,17 @@ def catchup_if_stale(max_age_hours: float = 8.0) -> bool:
 # ---------------- CLI ----------------
 
 def cmd_thumbs(limit: int = 300) -> None:
-    """预下载未读 / 最新卡片的预览图，存在 data/thumbs，之后浏览直接读本地。"""
+    """批量缓存预览图到 data/thumbs；可反复运行，已完整的仓库会自动跳过。"""
     from . import web  # 延迟导入：collect 在 web 中被导入，避免循环依赖
 
-    items = web._thumb_prefetch_candidates(limit)
-    if not items:
-        print("[thumbs] 没有需要下载的预览图")
+    if not _acquire_thumb_lock():
+        print("[thumbs] 已有批量缓存任务在跑，跳过")
         return
-    print(f"[thumbs] 开始预下载 {len(items)} 张（已缓存的会自动跳过）…")
-    with web._PREFETCH_LOCK:
-        web._PREFETCH_STATE.update(
-            {
-                "running": True,
-                "done": 0,
-                "saved": 0,
-                "failed": 0,
-                "total": len(items),
-                "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                "finished_at": "",
-                "error": "",
-            }
-        )
-    web._run_thumb_prefetch(items)
-    snapshot = web._prefetch_snapshot()
-    print(
-        f"[thumbs] 完成：成功 {snapshot['saved']} / {snapshot['total']}"
-        + (f"，失败 {snapshot['failed']}" if snapshot["failed"] else "")
-    )
-    if snapshot.get("error"):
-        print(f"[thumbs] {snapshot['error']}")
+    try:
+        result = web.prefetch_all_thumbs(limit=limit, log=lambda msg: print(msg, flush=True))
+        print("[thumbs] 结果：%s" % result)
+    finally:
+        _release_thumb_lock()
 
 
 def main() -> None:
